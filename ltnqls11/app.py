@@ -1,5 +1,6 @@
 import os
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import openai
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash # Flask 표준 비밀번호 해싱
@@ -11,6 +12,7 @@ import sqlite3
 load_dotenv()
 
 app = Flask(__name__)
+CORS(app)  # CORS 설정 추가
 
 # --- 환경 변수 설정 ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
