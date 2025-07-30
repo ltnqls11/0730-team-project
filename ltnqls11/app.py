@@ -2,10 +2,9 @@ import os
 from flask import Flask, request, jsonify
 import openai
 from dotenv import load_dotenv
-import bcrypt # 비밀번호 해싱을 위한 라이브러리
+from werkzeug.security import generate_password_hash, check_password_hash # Flask 표준 비밀번호 해싱
 import jwt # JWT (JSON Web Token) 라이브러리
 from datetime import datetime, timedelta
-import pymysql # MySQL 데이터베이스 연결을 위한 라이브러리
 import sqlite3
 
 # .env 파일에서 환경 변수 로드
@@ -15,14 +14,6 @@ app = Flask(__name__)
 
 # --- 환경 변수 설정 ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'user': os.getenv('DB_USER', 'root'),
-    'password': os.getenv('DB_PASSWORD', 'your_db_password'),
-    'db': os.getenv('DB_NAME', 'recipe_management_db'),
-    'charset': 'utf8mb4',
-    'cursorclass': pymysql.cursors.DictCursor # 결과를 딕셔너리 형태로 받기 위함
-}
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 
 if not OPENAI_API_KEY:
@@ -108,17 +99,21 @@ def register_user():
         return jsonify({"error": "데이터베이스 연결에 실패했습니다."}), 500
 
     try:
-        # 비밀번호 해싱
-        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-
         cursor = conn.cursor()
         # 사용자 이름 또는 이메일 중복 확인
         cursor.execute("SELECT user_id FROM Users WHERE username = ? OR email = ?", (username, email))
         if cursor.fetchone():
             return jsonify({"error": "이미 존재하는 사용자 이름 또는 이메일입니다."}), 409
 
+        # 새 사용자 데이터 구조 (요청한 형식대로)
+        new_user = {
+            'username': data['username'],
+            'email': data['email'],
+            'password_hash': generate_password_hash(data['password'])
+        }
+
         sql = "INSERT INTO Users (username, email, password_hash) VALUES (?, ?, ?)"
-        cursor.execute(sql, (username, email, hashed_password))
+        cursor.execute(sql, (new_user['username'], new_user['email'], new_user['password_hash']))
         conn.commit()
         return jsonify({"message": "사용자 등록 성공!", "user_id": cursor.lastrowid}), 201
     except Exception as e:
@@ -147,7 +142,7 @@ def login_user():
         cursor.execute("SELECT user_id, password_hash FROM Users WHERE username = ?", (username,))
         user = cursor.fetchone()
 
-        if user and bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+        if user and check_password_hash(user['password_hash'], password):
             token = generate_token(user['user_id'])
             return jsonify({"message": "로그인 성공!", "token": token, "user_id": user['user_id']}), 200
         else:
@@ -496,27 +491,101 @@ def get_recipe_detail(recipe_id):
         conn.close()
 
 # --- 애플리케이션 실행 ---
-if __name__ == '__main__':
-    app.run(debug=True, port=5000) # 개발 환경에서는 debug=True, 실제 배포 시에는 False
-
-# Flask 실행 시 자동으로 테이블 만드는 코드 추가 (선택) Flask에 초기 테이블 생성 코드가 없다면, 다음처럼 작성할 수 있습니다:
-
 def init_db():
+    """데이터베이스 테이블을 초기화합니다."""
     conn = sqlite3.connect('recipe_management.db')
     cursor = conn.cursor()
+    
+    # 기존 테이블 삭제 (구조 변경을 위해)
+    cursor.execute('DROP TABLE IF EXISTS Recipe_Ingredients')
+    cursor.execute('DROP TABLE IF EXISTS User_Ingredients')
+    cursor.execute('DROP TABLE IF EXISTS Recipes')
+    cursor.execute('DROP TABLE IF EXISTS Ingredients')
+    cursor.execute('DROP TABLE IF EXISTS Users')
+    
+    # Users 테이블 생성 (password_hash 필드 사용)
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS Users (
-            user_id INTEGER PRIMARY KEY,
+        CREATE TABLE Users (
+            user_id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
             email TEXT NOT NULL UNIQUE,
-            password TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
             allergy_info TEXT,
+            preferences TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    
+    # Ingredients 테이블 생성
+    cursor.execute('''
+        CREATE TABLE Ingredients (
+            ingredient_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ingredient_name TEXT NOT NULL UNIQUE,
+            category TEXT,
+            unit TEXT,
+            image_url TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # User_Ingredients 테이블 생성
+    cursor.execute('''
+        CREATE TABLE User_Ingredients (
+            user_ingredient_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            ingredient_id INTEGER NOT NULL,
+            quantity REAL NOT NULL,
+            purchase_date DATE,
+            expiration_date DATE,
+            location TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES Users(user_id),
+            FOREIGN KEY (ingredient_id) REFERENCES Ingredients(ingredient_id)
+        )
+    ''')
+    
+    # Recipes 테이블 생성
+    cursor.execute('''
+        CREATE TABLE Recipes (
+            recipe_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipe_name TEXT NOT NULL,
+            instructions TEXT NOT NULL,
+            created_by INTEGER,
+            cooking_time INTEGER,
+            difficulty_level TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES Users(user_id)
+        )
+    ''')
+    
+    # Recipe_Ingredients 테이블 생성
+    cursor.execute('''
+        CREATE TABLE Recipe_Ingredients (
+            recipe_ingredient_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipe_id INTEGER NOT NULL,
+            ingredient_id INTEGER NOT NULL,
+            quantity_needed REAL NOT NULL,
+            unit TEXT,
+            FOREIGN KEY (recipe_id) REFERENCES Recipes(recipe_id),
+            FOREIGN KEY (ingredient_id) REFERENCES Ingredients(ingredient_id)
+        )
+    ''')
+    
     conn.commit()
     conn.close()
+    print("데이터베이스 테이블 초기화 완료")
+
+# 데이터베이스 재설정 API 추가
+@app.route('/api/reset-db', methods=['POST'])
+def reset_database():
+    """데이터베이스를 재설정합니다. (개발용)"""
+    try:
+        init_db()
+        return jsonify({"message": "데이터베이스가 성공적으로 재설정되었습니다."}), 200
+    except Exception as e:
+        return jsonify({"error": f"데이터베이스 재설정 오류: {e}"}), 500
 
 if __name__ == '__main__':
     init_db()
     print("DB 초기화 완료")
+    app.run(debug=True, port=5000) # 개발 환경에서는 debug=True, 실제 배포 시에는 False
