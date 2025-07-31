@@ -48,7 +48,11 @@ class DatabaseManager:
                 unit TEXT,
                 expiry_date DATE,
                 purchase_date DATE DEFAULT (date('now')),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                repurchase_cycle INTEGER DEFAULT 7,  -- 재구매 주기 (일)
+                last_purchase_date DATE,
+                is_frequent_item BOOLEAN DEFAULT FALSE,  -- 자주 구매하는 재료인지
+                auto_repurchase_alert BOOLEAN DEFAULT TRUE  -- 자동 재구매 알림 여부
             )
         ''')
         
@@ -64,7 +68,11 @@ class DatabaseManager:
                 category TEXT,
                 difficulty TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                used_count INTEGER DEFAULT 0
+                used_count INTEGER DEFAULT 0,
+                calories REAL DEFAULT 0,  -- 칼로리 (kcal)
+                carbs REAL DEFAULT 0,     -- 탄수화물 (g)
+                protein REAL DEFAULT 0,   -- 단백질 (g)
+                fat REAL DEFAULT 0        -- 지방 (g)
             )
         ''')
         
@@ -77,6 +85,11 @@ class DatabaseManager:
                 cooking_date DATE DEFAULT (date('now')),
                 rating INTEGER,
                 notes TEXT,
+                calories_consumed REAL DEFAULT 0,  -- 섭취한 칼로리
+                carbs_consumed REAL DEFAULT 0,     -- 섭취한 탄수화물
+                protein_consumed REAL DEFAULT 0,   -- 섭취한 단백질
+                fat_consumed REAL DEFAULT 0,       -- 섭취한 지방
+                servings_consumed REAL DEFAULT 1,  -- 섭취한 인분
                 FOREIGN KEY (recipe_id) REFERENCES recipes (id)
             )
         ''')
@@ -90,6 +103,20 @@ class DatabaseManager:
                 unit TEXT,
                 priority INTEGER DEFAULT 1,
                 purchased BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # 재구매 기록 테이블
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS repurchase_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ingredient_name TEXT NOT NULL,
+                purchase_date DATE DEFAULT (date('now')),
+                quantity REAL,
+                unit TEXT,
+                price REAL,
+                store TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -121,7 +148,8 @@ class DatabaseManager:
         return df
     
     def add_recipe(self, name: str, ingredients: List[Dict], instructions: str, 
-                   cooking_time: int, servings: int, category: str, difficulty: str):
+                   cooking_time: int, servings: int, category: str, difficulty: str,
+                   calories: float = 0, carbs: float = 0, protein: float = 0, fat: float = 0):
         """레시피 추가"""
         conn = self._get_conn()
         cursor = conn.cursor()
@@ -129,9 +157,9 @@ class DatabaseManager:
         ingredients_json = json.dumps(ingredients, ensure_ascii=False)
         
         cursor.execute('''
-            INSERT INTO recipes (name, ingredients, instructions, cooking_time, servings, category, difficulty)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (name, ingredients_json, instructions, cooking_time, servings, category, difficulty))
+            INSERT INTO recipes (name, ingredients, instructions, cooking_time, servings, category, difficulty, calories, carbs, protein, fat)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (name, ingredients_json, instructions, cooking_time, servings, category, difficulty, calories, carbs, protein, fat))
         
         conn.commit()
         conn.close()
@@ -152,6 +180,23 @@ class DatabaseManager:
         
         conn.commit()
         conn.close()
+    
+    def add_cooking_history(self, recipe_id: int, rating: int = None, notes: str = None, ingredients_used: str = None):
+        """요리 기록 추가"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO cooking_history (recipe_id, rating, notes, ingredients_used)
+            VALUES (?, ?, ?, ?)
+        ''', (recipe_id, rating, notes, ingredients_used))
+        
+        # 레시피 사용 횟수도 함께 증가
+        cursor.execute('UPDATE recipes SET used_count = used_count + 1 WHERE id = ?', (recipe_id,))
+        
+        conn.commit()
+        conn.close()
+        return True
 
     def add_sample_ingredients_if_needed(self):
         """DB에 샘플 재료 15개가 없으면 자동 추가"""
@@ -455,7 +500,13 @@ class RecipeGenerator:
             "servings": 몇인분,
             "category": "요리 카테고리",
             "difficulty": "쉬움/보통/어려움",
-            "tips": "조리 팁"
+            "tips": "조리 팁",
+            "nutrition": {{
+                "calories": 1인분당_칼로리(kcal),
+                "carbs": 1인분당_탄수화물(g),
+                "protein": 1인분당_단백질(g),
+                "fat": 1인분당_지방(g)
+            }}
         }}
         """
         
@@ -539,12 +590,207 @@ class RecipeGenerator:
 
 def main():
     st.set_page_config(
-        page_title="오늘 뭐 먹지?",
-        page_icon="🍚🥗🍳🥘🥒🥕🥩",
-        layout="wide"
+        page_title="스마트 키친 - 오늘 뭐 먹지?",
+        page_icon="🍽️",
+        layout="wide",
+        initial_sidebar_state="collapsed"
     )
     
-    st.title("🍚 오늘 뭐 먹지? 🥗🍳🥘🥒🥕🥩")
+    # 통일된 색감의 깔끔한 CSS 스타일
+    st.markdown("""
+    <style>
+    :root {
+        --primary-color: #4A90E2;
+        --primary-dark: #357ABD;
+        --secondary-color: #7B68EE;
+        --accent-color: #50C878;
+        --warning-color: #FF6B6B;
+        --success-color: #4ECDC4;
+        --light-bg: #F8FAFC;
+        --white: #FFFFFF;
+        --text-dark: #2D3748;
+        --text-light: #718096;
+        --border-color: #E2E8F0;
+    }
+    
+    .main {
+        padding-top: 1rem;
+        background-color: var(--light-bg);
+    }
+    
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: var(--white);
+        padding: 8px;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        padding-left: 20px;
+        padding-right: 20px;
+        background-color: transparent;
+        border-radius: 8px;
+        border: none;
+        color: var(--text-light);
+        font-weight: 500;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: var(--primary-color);
+        color: white;
+        box-shadow: 0 2px 8px rgba(74, 144, 226, 0.3);
+    }
+    
+    .metric-card {
+        background: var(--white);
+        padding: 1.5rem;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border: 1px solid var(--border-color);
+        text-align: center;
+        margin-bottom: 1rem;
+    }
+    
+    .feature-card {
+        background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+        padding: 2rem;
+        border-radius: 15px;
+        color: white;
+        text-align: center;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 15px rgba(74, 144, 226, 0.2);
+        transition: transform 0.3s ease;
+    }
+    
+    .feature-card:hover {
+        transform: translateY(-2px);
+    }
+    
+    .feature-card-accent {
+        background: linear-gradient(135deg, var(--accent-color) 0%, var(--success-color) 100%);
+        padding: 2rem;
+        border-radius: 15px;
+        color: white;
+        text-align: center;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 15px rgba(80, 200, 120, 0.2);
+        transition: transform 0.3s ease;
+    }
+    
+    .feature-card-warning {
+        background: linear-gradient(135deg, var(--warning-color) 0%, #FF8E8E 100%);
+        padding: 2rem;
+        border-radius: 15px;
+        color: white;
+        text-align: center;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 15px rgba(255, 107, 107, 0.2);
+        transition: transform 0.3s ease;
+    }
+    
+    .recipe-card {
+        background: var(--white);
+        padding: 1.5rem;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border-left: 4px solid var(--primary-color);
+        margin-bottom: 1rem;
+    }
+    
+    .nutrition-card {
+        background: linear-gradient(135deg, var(--accent-color) 0%, var(--success-color) 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 8px rgba(80, 200, 120, 0.2);
+    }
+    
+    .warning-card {
+        background: linear-gradient(135deg, var(--warning-color) 0%, #FF8E8E 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 8px rgba(255, 107, 107, 0.2);
+    }
+    
+    .success-card {
+        background: linear-gradient(135deg, var(--success-color) 0%, var(--accent-color) 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 8px rgba(78, 205, 196, 0.2);
+    }
+    
+    .stButton > button {
+        border-radius: 8px;
+        border: none;
+        background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+        color: white;
+        font-weight: 500;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 8px rgba(74, 144, 226, 0.2);
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(74, 144, 226, 0.3);
+    }
+    
+    .stSelectbox > div > div {
+        border-radius: 8px;
+        border-color: var(--border-color);
+    }
+    
+    .stTextInput > div > div > input {
+        border-radius: 8px;
+        border-color: var(--border-color);
+    }
+    
+    .stTextArea > div > div > textarea {
+        border-radius: 8px;
+        border-color: var(--border-color);
+    }
+    
+    h1 {
+        color: var(--text-dark);
+        font-weight: 700;
+        margin-bottom: 2rem;
+    }
+    
+    h2 {
+        color: var(--text-dark);
+        font-weight: 600;
+        margin-bottom: 1rem;
+    }
+    
+    h3 {
+        color: var(--text-dark);
+        font-weight: 500;
+        margin-bottom: 0.8rem;
+    }
+    
+    .stMetric {
+        background: var(--white);
+        padding: 1rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # 통일된 색감의 헤더
+    st.markdown("""
+    <div style="text-align: center; padding: 2.5rem 0; background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%); border-radius: 15px; margin-bottom: 2rem; box-shadow: 0 4px 20px rgba(74, 144, 226, 0.2);">
+        <h1 style="color: white; font-size: 2.5rem; margin: 0; font-weight: 700;">🍽️ 스마트 키친</h1>
+        <p style="color: rgba(255,255,255,0.9); font-size: 1.1rem; margin: 0.5rem 0 0 0;">AI와 함께하는 똑똑한 요리 생활</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     # 데이터베이스 매니저 초기화
     db = DatabaseManager()
@@ -556,253 +802,73 @@ def main():
     ])
     
     with tab1:
-        col1, col2 = st.columns([5, 1])
-        with col2:
-            if st.button("🔄 새로고침", key="refresh_home"):
-                st.rerun()
         show_home_page(db)
     
     with tab2:
-        col1, col2 = st.columns([5, 1])
-        with col2:
-            if st.button("🔄 새로고침", key="refresh_ingredients"):
-                st.rerun()
         show_ingredient_management(db)
     
     with tab3:
-        col1, col2 = st.columns([5, 1])
-        with col2:
-            if st.button("🔄 새로고침", key="refresh_recipe_rec"):
-                st.rerun()
         show_recipe_recommendation(db)
     
     with tab4:
-        col1, col2 = st.columns([5, 1])
-        with col2:
-            if st.button("🔄 새로고침", key="refresh_recipe_book"):
-                st.rerun()
         show_recipe_book(db)
     
     with tab5:
-        col1, col2 = st.columns([5, 1])
-        with col2:
-            if st.button("🔄 새로고침", key="refresh_shopping"):
-                st.rerun()
         show_shopping_list(db)
     
     with tab6:
-        col1, col2 = st.columns([5, 1])
-        with col2:
-            if st.button("🔄 새로고침", key="refresh_cooking"):
-                st.rerun()
         show_cooking_history(db)
     
     with tab7:
-        col1, col2 = st.columns([5, 1])
-        with col2:
-            if st.button("🔄 새로고침", key="refresh_analytics"):
-                st.rerun()
         show_analytics_dashboard(db)
 
 def show_home_page(db: DatabaseManager):
     """홈 페이지"""
-    # 환영 메시지와 이미지
-    st.markdown("""
-    <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 15px; margin-bottom: 30px;">
-        <h1 style="color: white; font-size: 2.5em; margin-bottom: 10px;">🍚 오늘 뭐 먹지? 🥗</h1>
-        <p style="color: white; font-size: 1.2em; margin: 0;">맛있는 요리의 시작, 여기서부터!</p>
-    </div>
-    """, unsafe_allow_html=True)
     
-    # 랜덤 메뉴 추천 섹션
-    st.markdown("### 🎲 오늘의 랜덤 메뉴 추천")
+    # 빠른 액세스 버튼들
+    st.markdown("### 🚀 빠른 시작")
     
-    # 음식 메뉴 리스트 (카테고리별로 정리)
-    korean_foods = {
-        "찌개류": ["청국장찌개", "순두부찌개", "고추장찌개", "부대찌개", "김치찌개", "된장찌개", "비지찌개", "동태찌개"],
-        "찜/조림": ["갈비찜", "닭볶음탕", "아귀찜", "찜닭", "연근조림", "감자조림", "장조림", "콩조림"],
-        "국물요리": ["육개장", "떡국", "미역국", "콩나물국", "북엇국", "소고기무국", "시래기국", "감자국", "어묵탕"],
-        "밥요리": ["제육볶밥", "비빔밥", "김치볶음밥", "오징어덮밥", "카레덮밥", "짜장밥", "야채볶음밥"],
-        "면요리": ["라면", "토마토스파게티", "크림스파게티", "비빔국수", "칼국수", "우동", "볶음우동", "콩국수"],
-        "반찬류": ["시금치무침", "감자채볶음", "진미채볶음", "콩나물무침", "멸치볶음", "두부김치", "골뱅이무침"],
-        "구이/볶음": ["불고기", "수육", "소시지아채볶음", "순대볶음", "부침개", "튀김"],
-        "간식/기타": ["떡꼬치", "떡볶이", "호떡", "토스트", "샌드위치", "오므라이스"]
-    }
+    col1, col2, col3 = st.columns(3)
     
-    # 전체 메뉴를 하나의 리스트로 합치기
-    all_foods = []
-    for category_foods in korean_foods.values():
-        all_foods.extend(category_foods)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col2:
-        # 음식 룰렛 이미지 영역 (이미지가 있다면 표시, 없으면 이모지로 대체)
+    with col1:
         st.markdown("""
         <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%); border-radius: 15px; margin-bottom: 20px;">
-            <div style="font-size: 6em; margin-bottom: 10px;">🎯</div>
-            <h3 style="color: #333; margin: 0;">메뉴 룰렛</h3>
-            <p style="color: #666; margin: 5px 0;">고민 끝! 랜덤으로 메뉴를 정해보세요</p>
+            <div style="font-size: 4em; margin-bottom: 10px;">🎯</div>
+            <h4 style="color: #333; margin: 0;">메뉴룰렛</h4>
+            <p style="color: #666; margin: 5px 0;">고민 끝! 룰렛으로 메뉴 선택</p>
         </div>
         """, unsafe_allow_html=True)
         
-        # 랜덤 메뉴 추천 버튼
-        if st.button("🎲 오늘 뭐 먹을까? (랜덤 추천)", key="random_menu", type="primary"):
-            import random
-            selected_menu = random.choice(all_foods)
-            
-            # 세션 상태에 선택된 메뉴 저장
-            st.session_state['selected_random_menu'] = selected_menu
-            
-            # 애니메이션 효과를 위한 placeholder
-            placeholder = st.empty()
-            
-            # 룰렛 돌리는 효과
-            with placeholder.container():
-                st.markdown(f"""
-                <div style="text-align: center; padding: 30px; background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); border-radius: 15px; animation: pulse 0.5s;">
-                    <div style="font-size: 4em; margin-bottom: 15px;">🎉</div>
-                    <h2 style="color: white; margin: 0; font-size: 2.5em;">{selected_menu}</h2>
-                    <p style="color: white; margin-top: 10px; font-size: 1.2em;">오늘의 추천 메뉴입니다!</p>
-                </div>
-                <style>
-                @keyframes pulse {{
-                    0% {{ transform: scale(0.95); }}
-                    50% {{ transform: scale(1.05); }}
-                    100% {{ transform: scale(1); }}
-                }}
-                </style>
-                """, unsafe_allow_html=True)
+        if st.button("🎲 메뉴룰렛 하러가기", use_container_width=True):
+            st.session_state.active_tab = "recipe_recommendation"
+            st.rerun()
+    
+    with col2:
+        st.markdown("""
+        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); border-radius: 15px; margin-bottom: 20px;">
+            <div style="font-size: 4em; margin-bottom: 10px;">📸</div>
+            <h4 style="color: #333; margin: 0;">재료 등록</h4>
+            <p style="color: #666; margin: 5px 0;">사진으로 간편하게</p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        # 선택된 메뉴가 있을 때 추가 옵션 표시
-        if 'selected_random_menu' in st.session_state:
-            selected_menu = st.session_state['selected_random_menu']
-            
-            st.markdown("---")
-            
-            # 추천 메뉴와 관련된 레시피가 있는지 확인
-            recipes_df = db.get_recipes()
-            matching_recipes = pd.DataFrame()
-            
-            if not recipes_df.empty:
-                matching_recipes = recipes_df[recipes_df['name'].str.contains(selected_menu, case=False, na=False)]
-                if not matching_recipes.empty:
-                    st.success(f"🎯 '{selected_menu}' 레시피가 저장되어 있습니다!")
-                    for _, recipe in matching_recipes.iterrows():
-                        with st.expander(f"📖 {recipe['name']} - {recipe['cooking_time']}분, {recipe['difficulty']}"):
-                            st.write(f"**인분:** {recipe['servings']}인분")
-                            st.write(f"**카테고리:** {recipe['category']}")
-                            
-                            # 재료 표시
-                            try:
-                                recipe_ingredients = json.loads(recipe['ingredients'])
-                                st.write("**재료:**")
-                                for ing in recipe_ingredients:
-                                    st.write(f"• {ing.get('name', 'N/A')}: {ing.get('quantity', 'N/A')} {ing.get('unit', '')}")
-                            except:
-                                st.write("재료 정보를 불러올 수 없습니다.")
-                            
-                            if st.button(f"'{recipe['name']}' 요리했어요!", key=f"cook_random_{recipe['id']}"):
-                                db.update_recipe_usage(recipe['id'])
-                                st.success("요리 기록이 업데이트되었습니다!")
-                                st.rerun()
-            
-            # AI 레시피 추천 버튼
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                if st.button(f"🤖 '{selected_menu}' AI 레시피 받기", key="get_ai_recipe"):
-                    with st.spinner(f"AI가 '{selected_menu}' 레시피를 생성하는 중..."):
-                        try:
-                            recipe_gen = RecipeGenerator()
-                            
-                            # 현재 보유 재료 확인
-                            ingredients_df = db.get_ingredients()
-                            available_ingredients = ingredients_df['name'].tolist() if not ingredients_df.empty else []
-                            
-                            # AI 레시피 생성 프롬프트
-                            ingredients_text = ", ".join(available_ingredients[:10]) if available_ingredients else "일반적인 재료"
-                            
-                            prompt = f"""
-                            '{selected_menu}' 레시피를 추천해주세요.
-                            현재 보유 재료: {ingredients_text}
-                            
-                            집에서 쉽게 만들 수 있는 한식 레시피로 추천해주세요.
-                            """
-                            
-                            recommended_recipe = recipe_gen.generate_recipe_from_ingredients([selected_menu], prompt)
-                            
-                            if recommended_recipe:
-                                st.success(f"🎉 '{selected_menu}' 레시피가 생성되었습니다!")
-                                
-                                # 레시피 정보 표시
-                                st.subheader(f"✨ {recommended_recipe.get('name', selected_menu)}")
-                                
-                                col1, col2, col3 = st.columns(3)
-                                with col1:
-                                    st.metric("조리 시간", f"{recommended_recipe.get('cooking_time', 'N/A')}분")
-                                with col2:
-                                    st.metric("인분", f"{recommended_recipe.get('servings', 'N/A')}인분")
-                                with col3:
-                                    st.metric("난이도", recommended_recipe.get('difficulty', 'N/A'))
-                                
-                                # 재료
-                                st.markdown("**필요한 재료:**")
-                                for ingredient in recommended_recipe.get('ingredients', []):
-                                    st.write(f"• {ingredient.get('name', 'N/A')}: {ingredient.get('quantity', 'N/A')} {ingredient.get('unit', '')}")
-                                    
-                                # 조리법
-                                st.markdown("**조리법:**")
-                                instructions = recommended_recipe.get('instructions', '조리법이 없습니다.')
-                                for step in instructions.split('\n'):
-                                    if step.strip():
-                                        st.write(f"• {step.strip()}")
-                                
-                                if recommended_recipe.get('tips'):
-                                    st.info(f"💡 **팁:** {recommended_recipe['tips']}")
-                                
-                                # 레시피 저장 버튼
-                                if st.button("📖 이 레시피 저장하기", key="save_random_recipe"):
-                                    try:
-                                        db.add_recipe(
-                                            name=recommended_recipe.get('name', selected_menu),
-                                            ingredients=recommended_recipe.get('ingredients', []),
-                                            instructions=recommended_recipe.get('instructions', ''),
-                                            cooking_time=recommended_recipe.get('cooking_time', 0),
-                                            servings=recommended_recipe.get('servings', 0),
-                                            category=recommended_recipe.get('category', '한식'),
-                                            difficulty=recommended_recipe.get('difficulty', '쉬움')
-                                        )
-                                        st.success("레시피가 성공적으로 저장되었습니다!")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"레시피 저장 중 오류 발생: {str(e)}")
-                            else:
-                                st.warning("레시피 생성에 실패했습니다. 다시 시도해주세요.")
-                                
-                        except Exception as e:
-                            st.error(f"AI 레시피 생성 중 오류 발생: {str(e)}")
-            
-            # 다른 메뉴 추천 버튼
-            if st.button("🔄 다른 메뉴 추천받기", key="another_menu"):
-                del st.session_state['selected_random_menu']
-                st.rerun()
+        if st.button(" 재료 등록하러가기", use_container_width=True):
+            st.session_state.active_tab = "ingredient_management"
+            st.rerun()
     
-    # 카테고리별 메뉴 표시
-    st.markdown("### 🍽️ 카테고리별 메뉴")
-    
-    # 탭으로 카테고리 구분
-    category_tabs = st.tabs(list(korean_foods.keys()))
-    
-    for i, (category, foods) in enumerate(korean_foods.items()):
-        with category_tabs[i]:
-            st.markdown(f"#### {category}")
-            cols = st.columns(4)
-            for j, food in enumerate(foods):
-                with cols[j % 4]:
-                    if st.button(f"🍽️ {food}", key=f"category_{category}_{j}"):
-                        st.session_state['selected_random_menu'] = food
-                        st.success(f"'{food}' 선택! 아래에서 레시피를 확인하세요!")
-                        st.rerun()
+    with col3:
+        st.markdown("""
+        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); border-radius: 15px; margin-bottom: 20px;">
+            <div style="font-size: 4em; margin-bottom: 10px;">🤖</div>
+            <h4 style="color: #333; margin: 0;">AI 레시피</h4>
+            <p style="color: #666; margin: 5px 0;">맞춤형 레시피 추천</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("🤖 AI 레시피 받기", use_container_width=True):
+            st.session_state.active_tab = "recipe_recommendation"
+            st.session_state.recipe_tab = "ai"  # AI 탭으로 바로 이동
+            st.rerun()
     
     # 맛있는 음식 이모지들
     st.markdown("""
@@ -867,7 +933,7 @@ def show_home_page(db: DatabaseManager):
         st.subheader("🔥 인기 레시피 TOP 3")
         top_recipes = recipes_df.head(3)
         for _, recipe in top_recipes.iterrows():
-            with st.expander(f"{recipe['name']} (사용횟수: {recipe['used_count']}회)"):
+            with st.expander(f"{recipe['name']} (요리한 횟수: {recipe['used_count']}회)"):
                 st.write(f"**카테고리:** {recipe['category']}")
                 st.write(f"**난이도:** {recipe['difficulty']}")
                 st.write(f"**조리시간:** {recipe['cooking_time']}분")
@@ -1253,14 +1319,14 @@ def show_recipe_recommendation(db: DatabaseManager):
         st.warning("냉장고에 재료가 없습니다. '재료 관리' 탭에서 재료를 추가해주세요.")
         return
     
-    # 메뉴룰렛과 AI 추천을 탭으로 분리
-    tab1, tab2 = st.tabs(["🎯 메뉴룰렛", "🤖 AI 맞춤 추천"])
+    # AI 추천과 메뉴룰렛을 탭으로 분리
+    tab1, tab2 = st.tabs(["🤖 AI 맞춤 추천", "🎯 메뉴룰렛"])
     
     with tab1:
-        show_menu_roulette(db, ingredients_df)
+        show_ai_recipe_recommendation(db, ingredients_df)
     
     with tab2:
-        show_ai_recipe_recommendation(db, ingredients_df)
+        show_menu_roulette(db, ingredients_df)
 
 def show_menu_roulette(db: DatabaseManager, ingredients_df):
     """메뉴룰렛 기능"""
@@ -1326,7 +1392,6 @@ def show_menu_roulette(db: DatabaseManager, ingredients_df):
             placeholder.markdown(f"### 🎉 오늘의 메뉴: **{final_choice}** 🎉")
             
             st.session_state.roulette_result = final_choice
-            st.balloons()
     
     # 룰렛 결과가 있으면 레시피 추천
     if hasattr(st.session_state, 'roulette_result'):
@@ -1373,13 +1438,101 @@ def show_ai_recipe_recommendation(db: DatabaseManager, ingredients_df):
     st.subheader("🤖 AI 맞춤 레시피 추천")
     st.markdown("현재 가지고 있는 재료들을 기반으로 새로운 레시피를 추천받아보세요!")
     
-    available_ingredients = ingredients_df['name'].tolist()
-    
-    selected_ingredients = st.multiselect(
-        "레시피에 사용할 재료를 선택하세요:",
-        options=available_ingredients,
-        default=available_ingredients[:5] if len(available_ingredients) >= 5 else available_ingredients
-    )
+    # 재료를 카테고리별로 분류
+    if not ingredients_df.empty:
+        categories = ingredients_df['category'].unique()
+        selected_ingredients = []
+        
+        st.markdown("### 📋 카테고리별 재료 선택")
+        
+        # 카테고리별로 탭 생성
+        if len(categories) > 0:
+            category_tabs = st.tabs([f"{cat} ({len(ingredients_df[ingredients_df['category'] == cat])}개)" for cat in categories])
+            
+            for i, category in enumerate(categories):
+                with category_tabs[i]:
+                    category_ingredients = ingredients_df[ingredients_df['category'] == category]
+                    
+                    # 카테고리별 전체 선택/해제 버튼
+                    col1, col2, col3 = st.columns([1, 1, 2])
+                    with col1:
+                        if st.button(f"전체 선택", key=f"select_all_{category}"):
+                            for ingredient in category_ingredients['name']:
+                                if f"ingredient_{ingredient}" not in st.session_state:
+                                    st.session_state[f"ingredient_{ingredient}"] = True
+                            st.rerun()
+                    
+                    with col2:
+                        if st.button(f"전체 해제", key=f"deselect_all_{category}"):
+                            for ingredient in category_ingredients['name']:
+                                st.session_state[f"ingredient_{ingredient}"] = False
+                            st.rerun()
+                    
+                    # 재료별 체크박스 (3열로 배치)
+                    ingredient_list = category_ingredients['name'].tolist()
+                    cols = st.columns(3)
+                    
+                    for idx, ingredient in enumerate(ingredient_list):
+                        with cols[idx % 3]:
+                            # 유통기한 정보 표시
+                            ingredient_info = category_ingredients[category_ingredients['name'] == ingredient].iloc[0]
+                            expiry_date = ingredient_info.get('expiry_date')
+                            quantity = ingredient_info.get('quantity', 0)
+                            unit = ingredient_info.get('unit', '')
+                            
+                            # 유통기한 상태 확인
+                            status_emoji = "🟢"
+                            if expiry_date:
+                                try:
+                                    expiry = pd.to_datetime(expiry_date).date()
+                                    today = datetime.now().date()
+                                    if expiry < today:
+                                        status_emoji = "🔴"
+                                    elif expiry <= today + timedelta(days=3):
+                                        status_emoji = "🟡"
+                                except:
+                                    pass
+                            
+                            # 체크박스 기본값 설정 (처음에는 일부만 선택)
+                            default_checked = idx < 3 if f"ingredient_{ingredient}" not in st.session_state else st.session_state.get(f"ingredient_{ingredient}", False)
+                            
+                            is_selected = st.checkbox(
+                                f"{status_emoji} {ingredient} ({quantity}{unit})",
+                                value=default_checked,
+                                key=f"ingredient_{ingredient}",
+                                help=f"유통기한: {expiry_date if expiry_date else '정보 없음'}"
+                            )
+                            
+                            if is_selected:
+                                selected_ingredients.append(ingredient)
+        
+        # 선택된 재료 요약 표시
+        if selected_ingredients:
+            st.markdown("---")
+            st.markdown("### 🥘 선택된 재료")
+            
+            # 선택된 재료를 카테고리별로 그룹화하여 표시
+            selected_by_category = {}
+            for ingredient in selected_ingredients:
+                ingredient_info = ingredients_df[ingredients_df['name'] == ingredient].iloc[0]
+                category = ingredient_info['category']
+                if category not in selected_by_category:
+                    selected_by_category[category] = []
+                selected_by_category[category].append(ingredient)
+            
+            cols = st.columns(len(selected_by_category))
+            for i, (category, ingredients) in enumerate(selected_by_category.items()):
+                with cols[i]:
+                    st.markdown(f"**{category}**")
+                    for ingredient in ingredients:
+                        st.write(f"• {ingredient}")
+            
+            st.info(f"총 {len(selected_ingredients)}개 재료 선택됨")
+        else:
+            selected_ingredients = []
+    else:
+        st.warning("등록된 재료가 없습니다.")
+        selected_ingredients = []
     
     user_preferences = st.text_area("추가적인 요청사항 (예: 매콤하게, 간단한 요리, 아이들을 위한 요리 등)")
     
@@ -1411,6 +1564,50 @@ def display_recipe(recipe, db: DatabaseManager, recipe_type: str):
     with col3:
         st.metric("난이도", recipe.get('difficulty', 'N/A'))
     
+    # 영양 정보 표시
+    if recipe.get('nutrition'):
+        st.markdown("---")
+        st.subheader("🥗 영양 정보 (1인분 기준)")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        nutrition = recipe['nutrition']
+        
+        with col1:
+            st.metric("칼로리", f"{nutrition.get('calories', 0):.0f} kcal", delta=None)
+        with col2:
+            st.metric("탄수화물", f"{nutrition.get('carbs', 0):.1f} g", delta=None)
+        with col3:
+            st.metric("단백질", f"{nutrition.get('protein', 0):.1f} g", delta=None)
+        with col4:
+            st.metric("지방", f"{nutrition.get('fat', 0):.1f} g", delta=None)
+        
+        # 영양소 비율 차트
+        if nutrition.get('calories', 0) > 0:
+            carb_cal = nutrition.get('carbs', 0) * 4
+            protein_cal = nutrition.get('protein', 0) * 4
+            fat_cal = nutrition.get('fat', 0) * 9
+            
+            import plotly.express as px
+            
+            nutrition_data = {
+                '영양소': ['탄수화물', '단백질', '지방'],
+                '칼로리': [carb_cal, protein_cal, fat_cal],
+                '비율(%)': [
+                    (carb_cal / nutrition['calories'] * 100) if nutrition['calories'] > 0 else 0,
+                    (protein_cal / nutrition['calories'] * 100) if nutrition['calories'] > 0 else 0,
+                    (fat_cal / nutrition['calories'] * 100) if nutrition['calories'] > 0 else 0
+                ]
+            }
+            
+            fig = px.pie(
+                values=nutrition_data['칼로리'],
+                names=nutrition_data['영양소'],
+                title="영양소 비율",
+                color_discrete_sequence=['#FF9999', '#66B2FF', '#99FF99']
+            )
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True)
+    
     st.markdown("---")
     st.subheader("재료")
     for ingredient in recipe.get('ingredients', []):
@@ -1431,6 +1628,9 @@ def display_recipe(recipe, db: DatabaseManager, recipe_type: str):
     # 레시피 저장 버튼
     if st.button(f"이 레시피 저장하기", key=f"save_{recipe_type}"):
         try:
+            # 영양 정보 추출
+            nutrition = recipe.get('nutrition', {})
+            
             db.add_recipe(
                 name=recipe.get('name', '이름 없음'),
                 ingredients=recipe.get('ingredients', []),
@@ -1438,10 +1638,13 @@ def display_recipe(recipe, db: DatabaseManager, recipe_type: str):
                 cooking_time=recipe.get('cooking_time', 0),
                 servings=recipe.get('servings', 0),
                 category=recipe.get('category', '기타'),
-                difficulty=recipe.get('difficulty', '쉬움')
+                difficulty=recipe.get('difficulty', '쉬움'),
+                calories=nutrition.get('calories', 0),
+                carbs=nutrition.get('carbs', 0),
+                protein=nutrition.get('protein', 0),
+                fat=nutrition.get('fat', 0)
             )
             st.success("레시피가 성공적으로 저장되었습니다!")
-            st.balloons()
         except Exception as e:
             st.error(f"레시피 저장 중 오류 발생: {str(e)}")
 
@@ -1544,10 +1747,25 @@ def show_recipe_book(db: DatabaseManager):
             col_use, col_delete = st.columns(2)
             with col_use:
                 if st.button(f"'{recipe['name']}' 요리했어요!", key=f"use_recipe_{recipe['id']}"):
-                    # 레시피 사용 횟수 증가
-                    db.update_recipe_usage(recipe['id'])
-                    st.success(f"'{recipe['name']}' 요리 기록이 업데이트되었습니다.")
-                    st.rerun()
+                    # 요리 기록 입력 폼 표시
+                    with st.form(f"cooking_record_{recipe['id']}"):
+                        st.write(f"**{recipe['name']}** 요리 기록을 남겨주세요!")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            rating = st.selectbox("평점", [1, 2, 3, 4, 5], index=4, format_func=lambda x: "⭐" * x, key=f"rating_{recipe['id']}")
+                        with col2:
+                            cooking_date = st.date_input("요리한 날짜", value=datetime.now().date(), key=f"date_{recipe['id']}")
+                        
+                        notes = st.text_area("메모 및 후기", placeholder="맛은 어땠나요? 다음에 개선할 점이 있나요?", key=f"notes_{recipe['id']}")
+                        
+                        if st.form_submit_button("요리 기록 저장"):
+                            # 요리 기록 추가
+                            if db.add_cooking_history(recipe['id'], rating, notes):
+                                st.success(f"'{recipe['name']}' 요리 기록이 저장되었습니다!")
+                                st.rerun()
+                            else:
+                                st.error("요리 기록 저장에 실패했습니다.")
             with col_delete:
                 if st.button(f"'{recipe['name']}' 레시피 삭제", key=f"delete_recipe_{recipe['id']}"):
                     db.delete_recipe(recipe['id'])
