@@ -1334,6 +1334,100 @@ def smart_ingredient_suggestions(current_user_id):
     finally:
         conn.close()
 
+# --- 데이터베이스 초기화 함수 ---
+def init_db():
+    """데이터베이스 테이블을 초기화합니다."""
+    conn = None
+    try:
+        conn = sqlite3.connect('recipe_management.db')
+        cursor = conn.cursor()
+        
+        # 기존 테이블 삭제 (구조 변경을 위해)
+        cursor.execute('DROP TABLE IF EXISTS Recipe_Ingredients')
+        cursor.execute('DROP TABLE IF EXISTS User_Ingredients')
+        cursor.execute('DROP TABLE IF EXISTS Recipes')
+        cursor.execute('DROP TABLE IF EXISTS Ingredients')
+        cursor.execute('DROP TABLE IF EXISTS Users')
+        
+        # Users 테이블 생성 (password_hash 필드 사용)
+        cursor.execute('''
+            CREATE TABLE Users (
+                user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                allergy_info TEXT,
+                preferences TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Ingredients 테이블 생성
+        cursor.execute('''
+            CREATE TABLE Ingredients (
+                ingredient_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ingredient_name TEXT NOT NULL UNIQUE,
+                category TEXT,
+                unit TEXT,
+                image_url TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # User_Ingredients 테이블 생성
+        cursor.execute('''
+            CREATE TABLE User_Ingredients (
+                user_ingredient_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                ingredient_id INTEGER NOT NULL,
+                quantity REAL NOT NULL,
+                purchase_date DATE,
+                expiration_date DATE,
+                location TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES Users(user_id),
+                FOREIGN KEY (ingredient_id) REFERENCES Ingredients(ingredient_id)
+            )
+        ''')
+        
+        # Recipes 테이블 생성
+        cursor.execute('''
+            CREATE TABLE Recipes (
+                recipe_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_name TEXT NOT NULL,
+                instructions TEXT NOT NULL,
+                created_by INTEGER,
+                cooking_time INTEGER,
+                difficulty_level TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (created_by) REFERENCES Users(user_id)
+            )
+        ''')
+        
+        # Recipe_Ingredients 테이블 생성
+        cursor.execute('''
+            CREATE TABLE Recipe_Ingredients (
+                recipe_ingredient_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                ingredient_id INTEGER NOT NULL,
+                quantity_needed REAL NOT NULL,
+                unit TEXT,
+                FOREIGN KEY (recipe_id) REFERENCES Recipes(recipe_id),
+                FOREIGN KEY (ingredient_id) REFERENCES Ingredients(ingredient_id)
+            )
+        ''')
+        
+        conn.commit()
+        print("✅ 데이터베이스 테이블 초기화 완료")
+    except Exception as e:
+        print(f"❌ 데이터베이스 초기화 오류: {e}")
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()
+
 # 데이터베이스 재설정 API 추가
 @app.route('/api/reset-db', methods=['POST'])
 def reset_database():

@@ -1,36 +1,36 @@
-<?xml version="1.0" encoding="UTF-8"?><sqlb_project><db path="C:/Users/EDU03-16/Documents/GitHub/0730-team-project/recipe_management.db" readonly="0" foreign_keys="1" case_sensitive_like="0" temp_store="0" wal_autocheckpoint="1000" synchronous="2"/><attached/><window><main_tabs open="structure browser pragmas query" current="3"/></window><tab_structure><column_width id="0" width="300"/><column_width id="1" width="0"/><column_width id="2" width="100"/><column_width id="3" width="1039"/><column_width id="4" width="0"/><expanded_item id="0" parent="1"/><expanded_item id="1" parent="1"/><expanded_item id="2" parent="1"/><expanded_item id="3" parent="1"/></tab_structure><tab_browse><table title=".열기" custom_title="0" dock_id="1" table="0,6:열기"/><dock_state state="000000ff00000000fd0000000100000002000005a700000398fc0100000001fb000000160064006f0063006b00420072006f00770073006500310100000000000005a70000015300ffffff000005a70000000000000004000000040000000800000008fc00000000"/><default_encoding codec=""/><browse_table_settings/></tab_browse><tab_sql><sql name="SQL 1*">-- 외래키 기능 활성화
-PRAGMA foreign_keys = ON;
-
--- 사용자 정보 테이블
-CREATE TABLE IF NOT EXISTS Users (
-    user_id INTEGER PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE,  -- 사용자 고유 ID
-    email TEXT NOT NULL UNIQUE,     -- 이메일 주소
-    password TEXT NOT NULL,         -- 비밀번호
-    allergy_info TEXT,              -- 사용자 알레르기 정보
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP -- 사용자 생성일
-);
-
--- 재료 정보 테이블 (기본 재료 정보, 시스템 관리용)
-CREATE TABLE IF NOT EXISTS Ingredients (
-    ingredient_id INTEGER PRIMARY KEY,
-    ingredient_name TEXT NOT NULL UNIQUE,  -- 재료 이름
-    image_url TEXT,                        -- 재료 이미지 URL
-    category TEXT,                         -- 카테고리 (예: 채소, 육류 등)
-    unit VARCHAR(20)                       -- 기본 단위 (예: g, ml)
-);
-
--- 사용자가 보유한 재료 테이블 (냉장고 속 재료)
-CREATE TABLE IF NOT EXISTS User_Ingredients (
-    user_ingredient_id INTEGER PRIMARY KEY,
-    user_id INTEGER NOT NULL,              -- 사용자 ID
-    ingredient_id INTEGER NOT NULL,        -- 재료 ID
-    quantity REAL NOT NULL,                -- 수량
-    unit VARCHAR(20),                      -- 단위
-    expiration_date DATE,                  -- 유통기한
-    storage_method TEXT,                   -- 보관 방법 (예: 냉장, 냉동, 실온)
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,  -- 재료 추가 시간
-    FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE,
-    FOREIGN KEY (ingredient_id) REFERENCES Ingredients(ingredient_id) ON DELETE RESTRICT
-);
+<?xml version="1.0" encoding="UTF-8"?><sqlb_project><db path="C:/Users/EDU03-16/Documents/GitHub/0730-team-project/recipe_management.db" readonly="0" foreign_keys="1" case_sensitive_like="0" temp_store="0" wal_autocheckpoint="1000" synchronous="2"/><attached/><window><main_tabs open="structure browser pragmas query" current="3"/></window><tab_structure><column_width id="0" width="300"/><column_width id="1" width="0"/><column_width id="2" width="100"/><column_width id="3" width="1039"/><column_width id="4" width="0"/><expanded_item id="0" parent="1"/><expanded_item id="1" parent="1"/><expanded_item id="2" parent="1"/><expanded_item id="3" parent="1"/></tab_structure><tab_browse><table title=".열기" custom_title="0" dock_id="1" table="4,11:mainIngredients"/><dock_state state="000000ff00000000fd0000000100000002000005a70000039afc0100000001fb000000160064006f0063006b00420072006f00770073006500310100000000000005a70000018100ffffff000005a70000000000000004000000040000000800000008fc00000000"/><default_encoding codec=""/><browse_table_settings><table schema="main" name="Ingredients" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_" freeze_columns="0"><sort/><column_widths><column index="1" value="92"/><column index="2" value="116"/><column index="3" value="72"/><column index="4" value="65"/><column index="5" value="32"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table></browse_table_settings></tab_browse><tab_sql><sql name="SQL 1*">-- 외래키 기능 활성화
+PRAGMA foreign_keys = ON;
+
+-- 사용자 정보 테이블
+CREATE TABLE IF NOT EXISTS Users (
+    user_id INTEGER PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,  -- 사용자 고유 ID
+    email TEXT NOT NULL UNIQUE,     -- 이메일 주소
+    password_hash TEXT NOT NULL,         -- 비밀번호
+    allergy_info TEXT,              -- 사용자 알레르기 정보
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP -- 사용자 생성일
+);
+
+-- 재료 정보 테이블 (기본 재료 정보, 시스템 관리용)
+CREATE TABLE IF NOT EXISTS Ingredients (
+    ingredient_id INTEGER PRIMARY KEY,
+    ingredient_name TEXT NOT NULL UNIQUE,  -- 재료 이름
+    image_url TEXT,                        -- 재료 이미지 URL
+    category TEXT,                         -- 카테고리 (예: 채소, 육류 등)
+    unit VARCHAR(20)                       -- 기본 단위 (예: g, ml)
+);
+
+-- 사용자가 보유한 재료 테이블 (냉장고 속 재료)
+CREATE TABLE IF NOT EXISTS User_Ingredients (
+    user_ingredient_id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,              -- 사용자 ID
+    ingredient_id INTEGER NOT NULL,        -- 재료 ID
+    quantity REAL NOT NULL,                -- 수량
+    unit VARCHAR(20),                      -- 단위
+    expiration_date DATE,                  -- 유통기한
+    storage_method TEXT,                   -- 보관 방법 (예: 냉장, 냉동, 실온)
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,  -- 재료 추가 시간
+    FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (ingredient_id) REFERENCES Ingredients(ingredient_id) ON DELETE RESTRICT
+);
 </sql><current_tab id="0"/></tab_sql></sqlb_project>

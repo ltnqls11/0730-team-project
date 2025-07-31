@@ -1,0 +1,7 @@
+streamlit
+sqlite3
+pandas
+werkzeug
+pyjwt
+openai
+python-dotenv
