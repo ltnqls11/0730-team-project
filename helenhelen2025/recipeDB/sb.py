@@ -38,6 +38,13 @@ class DatabaseManager:
         conn = self._get_conn()
         cursor = conn.cursor()
         
+        # 기존 테이블에 icon_url 컬럼이 없으면 추가
+        try:
+            cursor.execute("ALTER TABLE ingredients ADD COLUMN icon_url TEXT")
+        except sqlite3.OperationalError:
+            # 컬럼이 이미 존재하거나 테이블이 없는 경우
+            pass
+        
         # 재료 테이블
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS ingredients (
@@ -48,7 +55,8 @@ class DatabaseManager:
                 unit TEXT,
                 expiry_date DATE,
                 purchase_date DATE DEFAULT (date('now')),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                icon_url TEXT
             )
         ''')
         
@@ -97,15 +105,15 @@ class DatabaseManager:
         conn.commit()
         conn.close()
     
-    def add_ingredient(self, name: str, category: str, quantity: float, unit: str, expiry_date: str = None):
+    def add_ingredient(self, name: str, category: str, quantity: float, unit: str, expiry_date: str = None, icon_url: str = None):
         """재료 추가"""
         conn = self._get_conn()
         cursor = conn.cursor()
         
         cursor.execute('''
-            INSERT INTO ingredients (name, category, quantity, unit, expiry_date)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (name, category, quantity, unit, expiry_date))
+            INSERT INTO ingredients (name, category, quantity, unit, expiry_date, icon_url)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (name, category, quantity, unit, expiry_date, icon_url))
         
         conn.commit()
         conn.close()
@@ -178,7 +186,7 @@ class DatabaseManager:
                 ("치즈", "유제품", 5, "장", (datetime.now()+timedelta(days=10)).date()),
             ]
             for name, category, quantity, unit, expiry_date in sample_ingredients:
-                cursor.execute('''INSERT INTO ingredients (name, category, quantity, unit, expiry_date) VALUES (?, ?, ?, ?, ?)''', (name, category, quantity, unit, expiry_date))
+                cursor.execute('''INSERT INTO ingredients (name, category, quantity, unit, expiry_date, icon_url) VALUES (?, ?, ?, ?, ?, ?)''', (name, category, quantity, unit, expiry_date, None))
             conn.commit()
         conn.close()
     
@@ -481,6 +489,34 @@ class RecipeGenerator:
             
         except Exception as e:
             st.error(f"레시피 생성 중 오류 발생: {str(e)}")
+            return None
+    
+    def generate_ingredient_icon(self, ingredient_name: str) -> Optional[str]:
+        """DALL-E 3를 사용해서 재료 아이콘 생성"""
+        prompt = f"""
+        Create a simple, clean icon of {ingredient_name} in a minimalist style.
+        The icon should be:
+        - Simple and recognizable
+        - Clean white background
+        - Colorful but not too complex
+        - Suitable for use as a food ingredient icon
+        - Emoji-like style but more detailed
+        - Square format
+        """
+        
+        try:
+            response = self.client.images.generate(
+                model="dall-e-3",
+                prompt=prompt,
+                size="1024x1024",
+                quality="standard",
+                n=1,
+            )
+            
+            return response.data[0].url
+            
+        except Exception as e:
+            st.error(f"아이콘 생성 중 오류 발생: {str(e)}")
             return None
     
     def analyze_ingredients_from_image(self, image_data: bytes) -> List[Dict]:
@@ -894,57 +930,125 @@ def show_ingredient_management(db: DatabaseManager):
     tab1, tab2, tab3, tab4 = st.tabs(["사진으로 추가", "직접 입력", "재료 목록", "🗑️ 재료 삭제"])
     
     with tab1:
-        st.subheader("📸 사진으로 재료 인식")
+        st.subheader("🎨 AI 아이콘으로 재료 추가")
         
-        # OpenAI API 키 입력 UI 제거
+        st.info("재료 이름을 입력하면 AI가 해당 재료의 아이콘을 그려드립니다!")
         
-        uploaded_file = st.file_uploader("냉장고 사진을 업로드하세요", type=['png', 'jpg', 'jpeg'])
-        
-        if uploaded_file is not None:
-            # 이미지 표시
-            image = Image.open(uploaded_file)
-            st.image(image, caption="업로드된 이미지", use_column_width=True)
+        # 재료 입력 폼
+        with st.form("ai_icon_ingredient_form"):
+            col1, col2 = st.columns(2)
             
-            if st.button("재료 인식하기"):
-                with st.spinner("이미지에서 재료를 인식하는 중..."):
+            with col1:
+                ingredient_name = st.text_input("재료명", placeholder="예: 토마토, 양파, 닭가슴살")
+                category = st.selectbox("카테고리", 
+                    ["채소", "과일", "육류", "해산물", "유제품", "곡류", "조미료", "기타"])
+            
+            with col2:
+                quantity = st.number_input("수량", min_value=0.0, step=0.1, value=1.0)
+                unit = st.selectbox("단위", ["개", "g", "kg", "ml", "L", "컵", "큰술", "작은술"])
+            
+            expiry_date = st.date_input("유통기한 (선택사항)", value=None)
+            
+            generate_icon = st.form_submit_button("🎨 AI 아이콘 생성하기", type="primary")
+        
+        if generate_icon and ingredient_name:
+            with st.spinner(f"'{ingredient_name}' 아이콘을 AI가 그리는 중... 잠시만 기다려주세요!"):
+                try:
                     recipe_gen = RecipeGenerator()
-                    ingredients = recipe_gen.analyze_ingredients_from_image(uploaded_file.getvalue())
+                    icon_url = recipe_gen.generate_ingredient_icon(ingredient_name)
                     
-                    if ingredients:
-                        st.success(f"{len(ingredients)}개의 재료를 인식했습니다!")
+                    if icon_url:
+                        col1, col2, col3 = st.columns([1, 2, 1])
+                        with col2:
+                            st.image(icon_url, caption=f"{ingredient_name} 아이콘", width=300)
                         
-                        # 인식된 재료들을 데이터프레임으로 표시
-                        df = pd.DataFrame(ingredients)
-                        edited_df = st.data_editor(
-                            df,
-                            column_config={
-                                "name": "재료명",
-                                "category": "카테고리",
-                                "estimated_quantity": "수량",
-                                "unit": "단위"
-                            },
-                            num_rows="dynamic"
-                        )
+                        st.success(f"🎉 '{ingredient_name}' 아이콘이 생성되었습니다!")
                         
-                        if st.button("선택된 재료들 저장"):
-                            for _, row in edited_df.iterrows():
-                                # pandas DataFrame에서 NaN 값은 float로 처리될 수 있으므로 None으로 명시적으로 변환
-                                expiry_date_str = None
-                                if 'expiry_date' in row and pd.notna(row['expiry_date']):
-                                    # 날짜 형식을 'YYYY-MM-DD'로 보장
-                                    expiry_date_str = pd.to_datetime(row['expiry_date']).strftime('%Y-%m-%d')
-                                    
-                                db.add_ingredient(
-                                    name=row['name'],
-                                    category=row['category'],
-                                    quantity=row['estimated_quantity'],
-                                    unit=row['unit'],
-                                    expiry_date=expiry_date_str
-                                )
-                            st.success("재료들이 저장되었습니다!")
+                        # 재료 저장 버튼
+                        if st.button("✅ 이 재료를 냉장고에 추가하기", key="save_ai_ingredient"):
+                            db.add_ingredient(
+                                name=ingredient_name,
+                                category=category,
+                                quantity=quantity,
+                                unit=unit,
+                                expiry_date=expiry_date.isoformat() if expiry_date else None,
+                                icon_url=icon_url
+                            )
+                            st.success(f"'{ingredient_name}'이(가) 냉장고에 추가되었습니다!")
                             st.rerun()
                     else:
-                        st.error("재료를 인식할 수 없습니다. 다른 이미지를 시도해보세요.")
+                        st.error("아이콘 생성에 실패했습니다. 다시 시도해주세요.")
+                        
+                except Exception as e:
+                    st.error(f"오류가 발생했습니다: {str(e)}")
+        
+        # 빠른 재료 추가 섹션
+        st.markdown("---")
+        st.markdown("### 🚀 빠른 재료 추가")
+        st.markdown("자주 사용하는 재료들을 클릭해서 바로 아이콘을 생성해보세요!")
+        
+        common_ingredients = [
+            "토마토", "양파", "감자", "당근", "브로콜리", "시금치",
+            "닭가슴살", "소고기", "돼지고기", "연어", "새우", "달걀",
+            "우유", "치즈", "요거트", "쌀", "빵", "파스타"
+        ]
+        
+        # 3열로 버튼 배치
+        cols = st.columns(3)
+        for i, ingredient in enumerate(common_ingredients):
+            with cols[i % 3]:
+                if st.button(f"🎨 {ingredient}", key=f"quick_{ingredient}"):
+                    with st.spinner(f"'{ingredient}' 아이콘 생성 중..."):
+                        try:
+                            recipe_gen = RecipeGenerator()
+                            icon_url = recipe_gen.generate_ingredient_icon(ingredient)
+                            
+                            if icon_url:
+                                st.image(icon_url, caption=f"{ingredient} 아이콘", width=150)
+                                
+                                # 세션 상태에 저장
+                                st.session_state[f'generated_icon_{ingredient}'] = {
+                                    'url': icon_url,
+                                    'name': ingredient
+                                }
+                                
+                                st.success(f"'{ingredient}' 아이콘 생성 완료!")
+                        except Exception as e:
+                            st.error(f"오류: {str(e)}")
+        
+        # 생성된 아이콘들 표시 및 저장 옵션
+        generated_icons = [key for key in st.session_state.keys() if key.startswith('generated_icon_')]
+        
+        if generated_icons:
+            st.markdown("---")
+            st.markdown("### 📋 생성된 아이콘들")
+            
+            for icon_key in generated_icons:
+                icon_data = st.session_state[icon_key]
+                
+                col1, col2, col3 = st.columns([1, 2, 2])
+                
+                with col1:
+                    st.image(icon_data['url'], width=100)
+                
+                with col2:
+                    st.write(f"**{icon_data['name']}**")
+                
+                with col3:
+                    if st.button(f"냉장고에 추가", key=f"add_{icon_data['name']}"):
+                        # 기본값으로 재료 추가
+                        db.add_ingredient(
+                            name=icon_data['name'],
+                            category="기타",  # 기본 카테고리
+                            quantity=1.0,
+                            unit="개",
+                            expiry_date=None,
+                            icon_url=icon_data['url']
+                        )
+                        st.success(f"'{icon_data['name']}'이(가) 냉장고에 추가되었습니다!")
+                        # 세션에서 제거
+                        del st.session_state[icon_key]
+                        st.rerun()
     
     with tab2:
         st.subheader("✏️ 직접 입력")
@@ -971,7 +1075,8 @@ def show_ingredient_management(db: DatabaseManager):
                     category=category,
                     quantity=quantity,
                     unit=unit,
-                    expiry_date=expiry_date.isoformat() if expiry_date else None
+                    expiry_date=expiry_date.isoformat() if expiry_date else None,
+                    icon_url=None  # 직접 입력시에는 아이콘 없음
                 )
                 st.success(f"{name}이(가) 추가되었습니다!")
                 st.rerun()
@@ -1215,6 +1320,19 @@ def display_ingredients_as_cards(df: pd.DataFrame):
                         card_color = "#f8d7da" # 유통기한 지남 (연한 빨강)
                         text_color = "#721c24" # 진한 빨강
 
+                # 아이콘이 있으면 표시
+                icon_html = ""
+                if pd.notna(ingredient.get('icon_url')) and ingredient['icon_url']:
+                    icon_html = f'<img src="{ingredient["icon_url"]}" style="width: 60px; height: 60px; border-radius: 8px; margin-bottom: 10px; object-fit: cover;" />'
+                else:
+                    # 기본 이모지 아이콘
+                    category_icons = {
+                        "채소": "🥬", "과일": "🍎", "육류": "🥩", "해산물": "🐟",
+                        "유제품": "🥛", "곡류": "🌾", "조미료": "🧂", "기타": "🍽️"
+                    }
+                    default_icon = category_icons.get(ingredient['category'], "🍽️")
+                    icon_html = f'<div style="font-size: 3em; margin-bottom: 10px;">{default_icon}</div>'
+
                 st.markdown(f"""
                     <div style="
                         background-color: {card_color};
@@ -1227,7 +1345,9 @@ def display_ingredients_as_cards(df: pd.DataFrame):
                         flex-direction: column;
                         justify-content: space-between;
                         color: {text_color};
+                        text-align: center;
                     ">
+                        {icon_html}
                         <h4 style="margin-top: 0; margin-bottom: 10px; color: {text_color};">{ingredient['name']}</h4>
                         <p style="margin: 0; font-size: 0.9em;"><strong>카테고리:</strong> {ingredient['category']}</p>
                         <p style="margin: 0; font-size: 0.9em;"><strong>수량:</strong> {ingredient['quantity']} {ingredient['unit']}</p>
