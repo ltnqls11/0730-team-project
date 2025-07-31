@@ -28,6 +28,13 @@ function App() {
   const [preferences, setPreferences] = useState(''); // 선호도 입력
   const [isLoading, setIsLoading] = useState(false); // 로딩 상태
 
+  // 시각화 관련 상태
+  const [dashboardStats, setDashboardStats] = useState(null);
+  const [chartAnalyses, setChartAnalyses] = useState({});
+  const [nutritionAnalysis, setNutritionAnalysis] = useState('');
+  const [mealPlan, setMealPlan] = useState('');
+  const [priceAnalysis, setPriceAnalysis] = useState('');
+
   // --- 백엔드 API 기본 URL ---
   const API_BASE_URL = 'http://127.0.0.1:5000/api'; // Flask 백엔드 주소
 
@@ -37,6 +44,7 @@ function App() {
       setIsLoggedIn(true);
       setCurrentView('dashboard');
       fetchUserIngredients();
+      fetchDashboardStats();
     }
   }, [token, userId]); // token 또는 userId가 변경될 때마다 실행
 
@@ -58,16 +66,27 @@ function App() {
         body: body ? JSON.stringify(body) : null,
       };
 
+      console.log('API 요청:', `${API_BASE_URL}${endpoint}`, options); // 디버깅용
+
       const response = await fetch(`${API_BASE_URL}${endpoint}`, options);
-      const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || data.message || 'API 요청 실패');
+        if (response.status === 0 || !response.status) {
+          throw new Error('서버에 연결할 수 없습니다. Flask 서버가 실행 중인지 확인해주세요.');
+        }
+        const data = await response.json();
+        throw new Error(data.error || data.message || `HTTP ${response.status} 오류`);
       }
+
+      const data = await response.json();
       return data;
     } catch (error) {
       console.error('API 호출 오류:', error);
-      setMessage(`오류: ${error.message}`);
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        setMessage('오류: 서버에 연결할 수 없습니다. Flask 서버(http://127.0.0.1:5000)가 실행 중인지 확인해주세요.');
+      } else {
+        setMessage(`오류: ${error.message}`);
+      }
       return null;
     } finally {
       setIsLoading(false); // 로딩 종료
@@ -141,6 +160,7 @@ function App() {
       setNewIngredientLocation('냉장실');
       fetchUserIngredients(); // 재료 추가 후 목록 새로고침
       setCurrentView('dashboard'); // 대시보드로 돌아가기
+      fetchDashboardStats(); // 통계 새로고침
     }
   };
 
@@ -150,6 +170,7 @@ function App() {
       if (data) {
         setMessage('재료가 성공적으로 삭제되었습니다.');
         fetchUserIngredients(); // 재료 삭제 후 목록 새로고침
+        fetchDashboardStats(); // 통계 새로고침
       }
     }
   };
@@ -163,7 +184,69 @@ function App() {
     });
     if (data && data.recommended_recipes_text) {
       setRecommendedRecipes(data.recommended_recipes_text);
-      setMessage('레시피 추천이 완료되었습니다!');
+      setMessage('GPT가 맞춤 레시피를 추천했습니다!');
+    }
+  };
+
+  // --- GPT 재료 추천 함수 ---
+  const handleSmartSuggestions = async () => {
+    const data = await callApi('/smart-ingredient-suggestions', 'POST');
+    if (data && data.suggestions) {
+      alert(`🤖 GPT 재료 추천:\n\n${data.suggestions}`);
+      setMessage(`현재 ${data.current_ingredients}개 재료를 분석하여 추천을 생성했습니다!`);
+    }
+  };
+
+  // --- 시각화 관련 함수들 ---
+  const fetchDashboardStats = async () => {
+    const data = await callApi('/dashboard-stats', 'GET');
+    if (data && data.stats) {
+      setDashboardStats(data.stats);
+    }
+  };
+
+  const generateChartAnalysis = async (chartType, chartData) => {
+    const data = await callApi('/generate-chart-description', 'POST', {
+      chart_type: chartType,
+      chart_data: chartData
+    });
+    if (data && data.chart_analysis) {
+      setChartAnalyses(prev => ({
+        ...prev,
+        [chartType]: {
+          analysis: data.chart_analysis,
+          title: data.chart_title,
+          summary: data.data_summary
+        }
+      }));
+      setMessage(`${data.chart_title} 분석이 완료되었습니다!`);
+    }
+  };
+
+  const analyzeNutrition = async () => {
+    const data = await callApi('/analyze-nutrition', 'POST');
+    if (data && data.nutrition_analysis) {
+      setNutritionAnalysis(data.nutrition_analysis);
+      setMessage('영양 분석이 완료되었습니다!');
+    }
+  };
+
+  const generateMealPlan = async (days = 7) => {
+    const data = await callApi('/generate-meal-plan', 'POST', {
+      days: days,
+      preferences: preferences.split(',').map(s => s.trim()).filter(Boolean)
+    });
+    if (data && data.meal_plan) {
+      setMealPlan(data.meal_plan);
+      setMessage(`${days}일 식단 계획이 생성되었습니다!`);
+    }
+  };
+
+  const analyzePrices = async () => {
+    const data = await callApi('/price-analysis', 'GET');
+    if (data && data.price_analysis) {
+      setPriceAnalysis(data.price_analysis);
+      setMessage('가격 분석이 완료되었습니다!');
     }
   };
 
@@ -290,12 +373,201 @@ function App() {
         );
       case 'dashboard':
         return (
-          <div className="w-full p-6 bg-white rounded-xl shadow-lg">
-            <h2 className="text-2xl font-bold text-center text-gray-800 mb-6">내 냉장고</h2>
+          <div className="w-full space-y-6">
+            {/* 실시간 현황 카드 */}
+            {dashboardStats && (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div className="bg-blue-500 text-white p-4 rounded-lg shadow-md">
+                  <h3 className="text-lg font-semibold">총 재료</h3>
+                  <p className="text-2xl font-bold">{dashboardStats.ingredient_count}개</p>
+                </div>
+                <div className="bg-green-500 text-white p-4 rounded-lg shadow-md">
+                  <h3 className="text-lg font-semibold">카테고리</h3>
+                  <p className="text-2xl font-bold">{dashboardStats.category_distribution.length}종류</p>
+                </div>
+                <div className="bg-yellow-500 text-white p-4 rounded-lg shadow-md">
+                  <h3 className="text-lg font-semibold">보관 위치</h3>
+                  <p className="text-2xl font-bold">{dashboardStats.location_distribution.length}곳</p>
+                </div>
+                <div className="bg-red-500 text-white p-4 rounded-lg shadow-md">
+                  <h3 className="text-lg font-semibold">유통기한 알림</h3>
+                  <p className="text-2xl font-bold">
+                    {dashboardStats.expiration_status.find(s => s.status === '곧 만료')?.count || 0}개
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* 시각적 차트 섹션 */}
+            {dashboardStats && (
+              <div className="bg-white p-6 rounded-xl shadow-lg">
+                <h3 className="text-xl font-semibold text-gray-700 mb-4">📊 시각적 차트</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  
+                  {/* 카테고리 분포 차트 */}
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h4 className="text-lg font-semibold text-gray-800 mb-3">📈 카테고리 분포</h4>
+                    <div className="space-y-2">
+                      {dashboardStats.category_distribution.map((item, index) => {
+                        const colors = ['bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500', 'bg-purple-500', 'bg-pink-500'];
+                        const total = dashboardStats.category_distribution.reduce((sum, cat) => sum + cat.count, 0);
+                        const percentage = ((item.count / total) * 100).toFixed(1);
+                        return (
+                          <div key={item.category} className="flex items-center">
+                            <div className={`w-4 h-4 ${colors[index % colors.length]} rounded mr-2`}></div>
+                            <span className="text-sm flex-1">{item.category}</span>
+                            <span className="text-sm font-semibold">{item.count}개 ({percentage}%)</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 유통기한 현황 차트 */}
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h4 className="text-lg font-semibold text-gray-800 mb-3">⏰ 유통기한 현황</h4>
+                    <div className="space-y-2">
+                      {dashboardStats.expiration_status.map((item) => {
+                        const total = dashboardStats.expiration_status.reduce((sum, exp) => sum + exp.count, 0);
+                        const percentage = ((item.count / total) * 100).toFixed(1);
+                        const statusColors = {
+                          '만료됨': 'bg-red-500',
+                          '곧 만료': 'bg-orange-500',
+                          '주의': 'bg-yellow-500',
+                          '신선함': 'bg-green-500'
+                        };
+                        return (
+                          <div key={item.status} className="flex items-center">
+                            <div className={`w-4 h-4 ${statusColors[item.status] || 'bg-gray-500'} rounded mr-2`}></div>
+                            <span className="text-sm flex-1">{item.status}</span>
+                            <span className="text-sm font-semibold">{item.count}개 ({percentage}%)</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 위치별 분포 차트 */}
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h4 className="text-lg font-semibold text-gray-800 mb-3">📍 보관 위치</h4>
+                    <div className="space-y-2">
+                      {dashboardStats.location_distribution.map((item, index) => {
+                        const colors = ['bg-indigo-500', 'bg-cyan-500', 'bg-emerald-500', 'bg-amber-500'];
+                        const total = dashboardStats.location_distribution.reduce((sum, loc) => sum + loc.count, 0);
+                        const percentage = ((item.count / total) * 100).toFixed(1);
+                        return (
+                          <div key={item.location} className="flex items-center">
+                            <div className={`w-4 h-4 ${colors[index % colors.length]} rounded mr-2`}></div>
+                            <span className="text-sm flex-1">{item.location}</span>
+                            <span className="text-sm font-semibold">{item.count}개 ({percentage}%)</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* GPT 데이터 분석 섹션 */}
+            <div className="bg-white p-6 rounded-xl shadow-lg">
+              <h3 className="text-xl font-semibold text-gray-700 mb-4">🤖 GPT 데이터 분석</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                <button
+                  onClick={() => dashboardStats && generateChartAnalysis('category', dashboardStats.category_distribution)}
+                  className="bg-indigo-500 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out"
+                  disabled={isLoading || !dashboardStats}
+                >
+                  📈 카테고리 분석
+                </button>
+                <button
+                  onClick={() => dashboardStats && generateChartAnalysis('expiration', dashboardStats.expiration_status)}
+                  className="bg-orange-500 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out"
+                  disabled={isLoading || !dashboardStats}
+                >
+                  ⏰ 유통기한 분석
+                </button>
+                <button
+                  onClick={() => dashboardStats && generateChartAnalysis('location', dashboardStats.location_distribution)}
+                  className="bg-teal-500 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out"
+                  disabled={isLoading || !dashboardStats}
+                >
+                  📍 위치별 분석
+                </button>
+              </div>
+              
+              {/* GPT 분석 결과 표시 */}
+              <div className="space-y-4">
+                {Object.entries(chartAnalyses).map(([type, data]) => (
+                  <div key={type} className="bg-gray-50 p-4 rounded-lg">
+                    <h4 className="text-lg font-semibold text-gray-800 mb-2">{data.title}</h4>
+                    <p className="text-sm text-gray-600 mb-3">데이터: {data.summary}</p>
+                    <div className="prose max-w-none text-gray-700" dangerouslySetInnerHTML={{ __html: data.analysis.replace(/\n/g, '<br/>') }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* AI 분석 섹션 */}
+            <div className="bg-white p-6 rounded-xl shadow-lg">
+              <h3 className="text-xl font-semibold text-gray-700 mb-4">🤖 AI 분석 도구</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <button
+                  onClick={analyzeNutrition}
+                  className="bg-green-500 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out"
+                  disabled={isLoading}
+                >
+                  🥗 영양 분석
+                </button>
+                <button
+                  onClick={() => generateMealPlan(7)}
+                  className="bg-purple-500 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out"
+                  disabled={isLoading}
+                >
+                  📅 주간 식단 계획
+                </button>
+                <button
+                  onClick={analyzePrices}
+                  className="bg-yellow-500 hover:bg-yellow-700 text-gray-800 font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out"
+                  disabled={isLoading}
+                >
+                  💰 가격 분석
+                </button>
+                <button
+                  onClick={handleSmartSuggestions}
+                  className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out"
+                  disabled={isLoading}
+                >
+                  🛒 재료 추천
+                </button>
+              </div>
+            </div>
+
+            {/* AI 분석 결과 표시 */}
+            {nutritionAnalysis && (
+              <div className="bg-green-50 p-6 rounded-xl shadow-lg">
+                <h3 className="text-xl font-semibold text-green-700 mb-4">🥗 영양 분석 결과</h3>
+                <div className="prose max-w-none text-gray-700" dangerouslySetInnerHTML={{ __html: nutritionAnalysis.replace(/\n/g, '<br/>') }} />
+              </div>
+            )}
+
+            {mealPlan && (
+              <div className="bg-purple-50 p-6 rounded-xl shadow-lg">
+                <h3 className="text-xl font-semibold text-purple-700 mb-4">📅 주간 식단 계획</h3>
+                <div className="prose max-w-none text-gray-700" dangerouslySetInnerHTML={{ __html: mealPlan.replace(/\n/g, '<br/>') }} />
+              </div>
+            )}
+
+            {priceAnalysis && (
+              <div className="bg-yellow-50 p-6 rounded-xl shadow-lg">
+                <h3 className="text-xl font-semibold text-yellow-700 mb-4">💰 가격 분석 결과</h3>
+                <div className="prose max-w-none text-gray-700" dangerouslySetInnerHTML={{ __html: priceAnalysis.replace(/\n/g, '<br/>') }} />
+              </div>
+            )}
 
             {/* 재료 목록 */}
-            <div className="mb-8">
-              <h3 className="text-xl font-semibold text-gray-700 mb-4">보유 재료 ({ingredients.length}개)</h3>
+            <div className="bg-white p-6 rounded-xl shadow-lg">
+              <h3 className="text-xl font-semibold text-gray-700 mb-4">📦 보유 재료 ({ingredients.length}개)</h3>
               {ingredients.length === 0 ? (
                 <p className="text-gray-500 text-center">아직 재료가 없습니다. 재료를 추가해주세요!</p>
               ) : (
@@ -332,7 +604,7 @@ function App() {
                 onClick={() => setCurrentView('recommend')}
                 className="bg-yellow-500 hover:bg-yellow-700 text-gray-800 font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out"
               >
-                ✨ 레시피 추천받기
+                ✨ GPT 레시피 추천
               </button>
             </div>
           </div>
@@ -500,10 +772,10 @@ function App() {
         {isLoggedIn && (
           <nav className="flex space-x-4">
             <button
-              onClick={() => { setCurrentView('dashboard'); fetchUserIngredients(); }}
+              onClick={() => { setCurrentView('dashboard'); fetchUserIngredients(); fetchDashboardStats(); }}
               className={`py-2 px-4 rounded-lg font-semibold transition duration-300 ease-in-out ${currentView === 'dashboard' ? 'bg-indigo-600 text-white' : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}`}
             >
-              내 냉장고
+              대시보드
             </button>
             <button
               onClick={() => setCurrentView('addIngredient')}
