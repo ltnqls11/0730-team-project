@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # OpenAI API 설정
-# openai.api_key = st.secrets["OPENAI_API_KEY"]  # Streamlit secrets 사용
+# openai.api_key = st.secrets["OPENAI_API_KEY"]  # Streamlit secrets 사용
 
 class DatabaseManager:
     def __init__(self, db_path: str = "fridge_management.db"):
@@ -470,6 +470,14 @@ class DatabaseManager:
         ''', conn, params=(target_date, today))
         conn.close()
         return df
+    
+    def delete_shopping_item(self, item_id: int):
+        """쇼핑리스트에서 특정 항목 삭제"""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM shopping_list WHERE id = ?', (item_id,))
+        conn.commit()
+        conn.close()
 
 class RecipeGenerator:
     def __init__(self):
@@ -596,199 +604,392 @@ def main():
         initial_sidebar_state="collapsed"
     )
     
-    # 통일된 색감의 깔끔한 CSS 스타일
+    # 파스텔 톤 기반 UI 디자인 스타일 가이드 적용
     st.markdown("""
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
+    
     :root {
-        --primary-color: #4A90E2;
-        --primary-dark: #357ABD;
-        --secondary-color: #7B68EE;
-        --accent-color: #50C878;
-        --warning-color: #FF6B6B;
-        --success-color: #4ECDC4;
-        --light-bg: #F8FAFC;
-        --white: #FFFFFF;
-        --text-dark: #2D3748;
-        --text-light: #718096;
-        --border-color: #E2E8F0;
+        /* 메인 컬러 - 연한 보라색 계열 (세련된 느낌) */
+        --primary-color: #D4B8E3;
+        --primary-light: #E6B8E3;
+        --primary-dark: #C2B8E3;
+        
+        /* 보조 컬러 - 크림, 연한 그레이 (배경) */
+        --secondary-color: #F5F5DC;
+        --secondary-light: #FAFAF0;
+        --secondary-dark: #E8E8D0;
+        
+        /* 포인트 컬러 - 연한 보라색 중심 파스텔 톤 */
+        --accent-orange: #F4C2C2;
+        --accent-red: #FF9B9B;
+        --accent-yellow: #FFE5B4;
+        --accent-blue: #B8D4E3;
+        --accent-purple: #D4B8E3;
+        --accent-pink: #F0B8E3;
+        
+        /* 배경 및 텍스트 */
+        --bg-primary: #FEFEFE;
+        --bg-secondary: #F8F9FA;
+        --bg-card: #FFFFFF;
+        --text-primary: #2C3E50;
+        --text-secondary: #6C757D;
+        --text-light: #ADB5BD;
+        
+        /* 경계선 */
+        --border-light: #E9ECEF;
+        --border-medium: #DEE2E6;
+        
+        /* 상태 컬러 (연한 보라색 중심 파스텔 톤) */
+        --success-light: #E6B8E3;
+        --success-dark: #D4B8E3;
+        --warning-light: #F4C2C2;
+        --warning-dark: #FF9B9B;
+        --error-light: #FF9B9B;
+        --error-dark: #F4C2C2;
+        --info-light: #B8D4E3;
+        --info-dark: #D4B8E3;
+    }
+    
+    * {
+        font-family: 'Noto Sans KR', sans-serif;
     }
     
     .main {
         padding-top: 1rem;
-        background-color: var(--light-bg);
+        background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+        min-height: 100vh;
     }
     
+    /* 탭 스타일링 */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background-color: var(--white);
-        padding: 8px;
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        gap: 12px;
+        background: var(--bg-card);
+        padding: 12px;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(212, 184, 227, 0.1);
+        border: 1px solid var(--border-light);
     }
     
     .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        padding-left: 20px;
-        padding-right: 20px;
-        background-color: transparent;
-        border-radius: 8px;
+        height: 48px;
+        padding: 0 24px;
+        background: transparent;
+        border-radius: 12px;
         border: none;
-        color: var(--text-light);
+        color: var(--text-secondary);
         font-weight: 500;
+        font-size: 14px;
+        transition: all 0.3s ease;
     }
     
     .stTabs [aria-selected="true"] {
-        background-color: var(--primary-color);
+        background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
         color: white;
-        box-shadow: 0 2px 8px rgba(74, 144, 226, 0.3);
+        box-shadow: 0 4px 15px rgba(212, 184, 227, 0.3);
+        transform: translateY(-1px);
     }
     
+    /* 카드 스타일링 */
     .metric-card {
-        background: var(--white);
+        background: var(--bg-card);
         padding: 1.5rem;
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        border: 1px solid var(--border-light);
         text-align: center;
         margin-bottom: 1rem;
+        transition: all 0.3s ease;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.12);
     }
     
     .feature-card {
-        background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+        background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
         padding: 2rem;
-        border-radius: 15px;
+        border-radius: 20px;
         color: white;
         text-align: center;
         margin-bottom: 1rem;
-        box-shadow: 0 4px 15px rgba(74, 144, 226, 0.2);
-        transition: transform 0.3s ease;
+        box-shadow: 0 8px 25px rgba(212, 184, 227, 0.25);
+        transition: all 0.3s ease;
+        border: 1px solid rgba(255,255,255,0.2);
     }
     
     .feature-card:hover {
-        transform: translateY(-2px);
+        transform: translateY(-3px);
+        box-shadow: 0 12px 35px rgba(212, 184, 227, 0.35);
     }
     
     .feature-card-accent {
-        background: linear-gradient(135deg, var(--accent-color) 0%, var(--success-color) 100%);
+        background: linear-gradient(135deg, var(--accent-orange) 0%, var(--accent-yellow) 100%);
         padding: 2rem;
-        border-radius: 15px;
-        color: white;
+        border-radius: 20px;
+        color: var(--text-primary);
         text-align: center;
         margin-bottom: 1rem;
-        box-shadow: 0 4px 15px rgba(80, 200, 120, 0.2);
-        transition: transform 0.3s ease;
+        box-shadow: 0 8px 25px rgba(244, 194, 194, 0.25);
+        transition: all 0.3s ease;
     }
     
     .feature-card-warning {
-        background: linear-gradient(135deg, var(--warning-color) 0%, #FF8E8E 100%);
+        background: linear-gradient(135deg, var(--accent-red) 0%, var(--accent-pink) 100%);
         padding: 2rem;
-        border-radius: 15px;
+        border-radius: 20px;
         color: white;
         text-align: center;
         margin-bottom: 1rem;
-        box-shadow: 0 4px 15px rgba(255, 107, 107, 0.2);
-        transition: transform 0.3s ease;
+        box-shadow: 0 8px 25px rgba(255, 155, 155, 0.25);
+        transition: all 0.3s ease;
     }
     
     .recipe-card {
-        background: var(--white);
+        background: var(--bg-card);
         padding: 1.5rem;
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
         border-left: 4px solid var(--primary-color);
         margin-bottom: 1rem;
+        transition: all 0.3s ease;
+    }
+    
+    .recipe-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.12);
     }
     
     .nutrition-card {
-        background: linear-gradient(135deg, var(--accent-color) 0%, var(--success-color) 100%);
+        background: linear-gradient(135deg, var(--success-light) 0%, var(--success-dark) 100%);
         padding: 1rem;
-        border-radius: 10px;
-        color: white;
+        border-radius: 12px;
+        color: var(--text-primary);
         text-align: center;
         margin: 0.5rem 0;
-        box-shadow: 0 2px 8px rgba(80, 200, 120, 0.2);
+        box-shadow: 0 4px 15px rgba(212, 184, 227, 0.2);
     }
     
     .warning-card {
-        background: linear-gradient(135deg, var(--warning-color) 0%, #FF8E8E 100%);
+        background: linear-gradient(135deg, var(--warning-light) 0%, var(--warning-dark) 100%);
         padding: 1rem;
-        border-radius: 10px;
-        color: white;
+        border-radius: 12px;
+        color: var(--text-primary);
         margin: 0.5rem 0;
-        box-shadow: 0 2px 8px rgba(255, 107, 107, 0.2);
+        box-shadow: 0 4px 15px rgba(244, 194, 194, 0.2);
     }
     
     .success-card {
-        background: linear-gradient(135deg, var(--success-color) 0%, var(--accent-color) 100%);
+        background: linear-gradient(135deg, var(--info-light) 0%, var(--info-dark) 100%);
         padding: 1rem;
-        border-radius: 10px;
-        color: white;
+        border-radius: 12px;
+        color: var(--text-primary);
         margin: 0.5rem 0;
-        box-shadow: 0 2px 8px rgba(78, 205, 196, 0.2);
+        box-shadow: 0 4px 15px rgba(212, 184, 227, 0.2);
     }
     
+    /* 버튼 스타일링 */
     .stButton > button {
-        border-radius: 8px;
+        border-radius: 12px;
         border: none;
-        background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+        background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
         color: white;
         font-weight: 500;
+        font-size: 14px;
+        padding: 8px 20px;
         transition: all 0.3s ease;
-        box-shadow: 0 2px 8px rgba(74, 144, 226, 0.2);
+        box-shadow: 0 4px 15px rgba(212, 184, 227, 0.25);
     }
     
     .stButton > button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(74, 144, 226, 0.3);
+        box-shadow: 0 8px 25px rgba(212, 184, 227, 0.35);
+        background: linear-gradient(135deg, var(--primary-dark) 0%, var(--primary-color) 100%);
     }
     
+    /* 입력 필드 스타일링 */
     .stSelectbox > div > div {
-        border-radius: 8px;
-        border-color: var(--border-color);
+        border-radius: 12px;
+        border: 2px solid var(--border-light);
+        background: var(--bg-card);
+        transition: all 0.3s ease;
+    }
+    
+    .stSelectbox > div > div:hover {
+        border-color: var(--primary-light);
+        box-shadow: 0 2px 10px rgba(212, 184, 227, 0.1);
     }
     
     .stTextInput > div > div > input {
-        border-radius: 8px;
-        border-color: var(--border-color);
+        border-radius: 12px;
+        border: 2px solid var(--border-light);
+        background: var(--bg-card);
+        padding: 12px 16px;
+        transition: all 0.3s ease;
+    }
+    
+    .stTextInput > div > div > input:focus {
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 3px rgba(212, 184, 227, 0.1);
     }
     
     .stTextArea > div > div > textarea {
-        border-radius: 8px;
-        border-color: var(--border-color);
+        border-radius: 12px;
+        border: 2px solid var(--border-light);
+        background: var(--bg-card);
+        padding: 12px 16px;
+        transition: all 0.3s ease;
     }
     
+    .stTextArea > div > div > textarea:focus {
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 3px rgba(212, 184, 227, 0.1);
+    }
+    
+    /* 체크박스 스타일링 */
+    .stCheckbox > div > div {
+        border-radius: 8px;
+        border: 2px solid var(--border-light);
+        background: var(--bg-card);
+        transition: all 0.3s ease;
+    }
+    
+    .stCheckbox > div > div:hover {
+        border-color: var(--primary-light);
+    }
+    
+    /* 메트릭 스타일링 */
+    .stMetric {
+        background: var(--bg-card);
+        padding: 1.5rem;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        border: 1px solid var(--border-light);
+        transition: all 0.3s ease;
+    }
+    
+    .stMetric:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.12);
+    }
+    
+    /* 헤더 스타일링 */
     h1 {
-        color: var(--text-dark);
+        color: var(--text-primary);
         font-weight: 700;
         margin-bottom: 2rem;
+        font-size: 2.5rem;
+        background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
     }
     
     h2 {
-        color: var(--text-dark);
+        color: var(--text-primary);
         font-weight: 600;
         margin-bottom: 1rem;
+        font-size: 1.8rem;
     }
     
     h3 {
-        color: var(--text-dark);
+        color: var(--text-primary);
         font-weight: 500;
         margin-bottom: 0.8rem;
+        font-size: 1.4rem;
     }
     
-    .stMetric {
-        background: var(--white);
+    /* 데이터프레임 스타일링 */
+    .dataframe {
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    
+    /* 차트 컨테이너 스타일링 */
+    .js-plotly-plot {
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        background: var(--bg-card);
         padding: 1rem;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    /* 스크롤바 스타일링 */
+    ::-webkit-scrollbar {
+        width: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+        background: var(--bg-secondary);
+        border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+        background: var(--primary-light);
+        border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--primary-color);
+    }
+    
+    /* 애니메이션 */
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .stApp > div > div > div > div > section > div {
+        animation: fadeIn 0.5s ease-out;
     }
     </style>
     """, unsafe_allow_html=True)
     
-    # 통일된 색감의 헤더
+    # 파스텔 톤 기반 헤더
+    # st.markdown("""
+    # <div style="text-align: center; padding: 3rem 0;background: linear-gradient(135deg, #e0e0e0 0%, #cfcfcf 50%, #bfbfbf 100%); border-radius: 20px; margin-bottom: 2rem; box-shadow:none; position: relative; overflow: hidden;">
+    #     <div style="position: absolute; top: -50px; left: -50px; width: 100px; height: 100px; background: rgba(255, 255, 255, 0.1); border-radius: 50%;"></div>
+    #     <div style="position: absolute; top: -30px; right: -30px; width: 80px; height: 80px; background: rgba(255, 255, 255, 0.1); border-radius: 50%;"></div>
+    #     <div style="position: absolute; bottom: -40px; left: 20%; width: 60px; height: 60px; background: rgba(255, 255, 255, 0.1); border-radius: 50%;"></div>
+    #     <h1 style="
+    #         color: black;
+    #         font-size: 3rem;
+    #         margin: 0;
+    #         font-weight: 700;
+    #         position: relative;
+    #         z-index: 1;
+    #         letter-spacing: 0.03em;
+    #     ">🍽️ 오늘 뭐먹지?</h1>
+    #     <p style="color: rgba(255,255,255,0.); font-size: 1.2rem; margin: 0.8rem 0 0 0; font-weight: 400; position: relative; z-index: 1;">AI와 함께하는 똑똑한 요리 생활</p>
+    #     <div style="margin-top: 1rem; position: relative; z-index: 1;">
+    #         <span style="display: inline-block; background: rgba(255,255,255,0.2); padding: 0.5rem 1rem; border-radius: 20px; margin: 0 0.5rem; font-size: 0.9rem; color: white;">🥬 재료 관리</span>
+    #         <span style="display: inline-block; background: rgba(255,255,255,0.2); padding: 0.5rem 1rem; border-radius: 20px; margin: 0 0.5rem; font-size: 0.9rem; color: white;">🍳 레시피 추천</span>
+    #         <span style="display: inline-block; background: rgba(255,255,255,0.2); padding: 0.5rem 1rem; border-radius: 20px; margin: 0 0.5rem; font-size: 0.9rem; color: white;">📊 분석 대시보드</span>
+    #     </div>
+    # </div>
+    # """, unsafe_allow_html=True)
     st.markdown("""
-    <div style="text-align: center; padding: 2.5rem 0; background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%); border-radius: 15px; margin-bottom: 2rem; box-shadow: 0 4px 20px rgba(74, 144, 226, 0.2);">
-        <h1 style="color: white; font-size: 2.5rem; margin: 0; font-weight: 700;">🍽️ 스마트 키친</h1>
-        <p style="color: rgba(255,255,255,0.9); font-size: 1.1rem; margin: 0.5rem 0 0 0;">AI와 함께하는 똑똑한 요리 생활</p>
+    <div style="text-align: center; padding: 3rem 0;background: linear-gradient(135deg, #e0e0e0 0%, #cfcfcf 50%, #bfbfbf 100%); border-radius: 20px; margin-bottom: 2rem; box-shadow:none; position: relative; overflow: hidden;">
+        <div style="position: absolute; top: -50px; left: -50px; width: 100px; height: 100px; background: rgba(255, 255, 255, 0.1); border-radius: 50%;"></div>
+        <div style="position: absolute; top: -30px; right: -30px; width: 80px; height: 80px; background: rgba(255, 255, 255, 0.1); border-radius: 50%;"></div>
+        <div style="position: absolute; bottom: -40px; left: 20%; width: 60px; height: 60px; background: rgba(255, 255, 255, 0.1); border-radius: 50%;"></div>
+        <h1 style="
+            color: white; /* Changed from black to white */
+            font-size: 3rem;
+            margin: 0;
+            font-weight: 700;
+            position: relative;
+            z-index: 1;
+            letter-spacing: 0.03em;
+        ">🍽️ 오늘 뭐먹지?</h1>
+        <p style="color: white; /* Changed from rgba(255,255,255,0.) to white */ font-size: 1.2rem; margin: 0.8rem 0 0 0; font-weight: 400; position: relative; z-index: 1;">AI와 함께하는 똑똑한 요리 생활</p>
+        <div style="margin-top: 1rem; position: relative; z-index: 1;">
+            <span style="display: inline-block; background: rgba(255,255,255,0.2); padding: 0.5rem 1rem; border-radius: 20px; margin: 0 0.5rem; font-size: 0.9rem; color: white;">🥬 재료 관리</span>
+            <span style="display: inline-block; background: rgba(255,255,255,0.2); padding: 0.5rem 1rem; border-radius: 20px; margin: 0 0.5rem; font-size: 0.9rem; color: white;">🍳 레시피 추천</span>
+            <span style="display: inline-block; background: rgba(255,255,255,0.2); padding: 0.5rem 1rem; border-radius: 20px; margin: 0 0.5rem; font-size: 0.9rem; color: white;">📊 분석 대시보드</span>
+        </div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -825,59 +1026,14 @@ def main():
 def show_home_page(db: DatabaseManager):
     """홈 페이지"""
     
-    # 빠른 액세스 버튼들
-    st.markdown("### 🚀 빠른 시작")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("""
-        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%); border-radius: 15px; margin-bottom: 20px;">
-            <div style="font-size: 4em; margin-bottom: 10px;">🎯</div>
-            <h4 style="color: #333; margin: 0;">메뉴룰렛</h4>
-            <p style="color: #666; margin: 5px 0;">고민 끝! 룰렛으로 메뉴 선택</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("🎲 메뉴룰렛 하러가기", use_container_width=True):
-            st.session_state.active_tab = "recipe_recommendation"
-            st.rerun()
-    
-    with col2:
-        st.markdown("""
-        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); border-radius: 15px; margin-bottom: 20px;">
-            <div style="font-size: 4em; margin-bottom: 10px;">📸</div>
-            <h4 style="color: #333; margin: 0;">재료 등록</h4>
-            <p style="color: #666; margin: 5px 0;">사진으로 간편하게</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button(" 재료 등록하러가기", use_container_width=True):
-            st.session_state.active_tab = "ingredient_management"
-            st.rerun()
-    
-    with col3:
-        st.markdown("""
-        <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); border-radius: 15px; margin-bottom: 20px;">
-            <div style="font-size: 4em; margin-bottom: 10px;">🤖</div>
-            <h4 style="color: #333; margin: 0;">AI 레시피</h4>
-            <p style="color: #666; margin: 5px 0;">맞춤형 레시피 추천</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("🤖 AI 레시피 받기", use_container_width=True):
-            st.session_state.active_tab = "recipe_recommendation"
-            st.session_state.recipe_tab = "ai"  # AI 탭으로 바로 이동
-            st.rerun()
-    
     # 맛있는 음식 이모지들
     st.markdown("""
-    <div style="text-align: center; padding: 20px; background-color: #f8f9fa; border-radius: 15px; margin: 20px 0;">
-        <h3 style="color: #333; margin-bottom: 20px;">🍽️ 다양한 요리 카테고리 🍽️</h3>
-        <div style="font-size: 3em; line-height: 1.5;">
+    <div style="text-align: center; padding: 30px; background: linear-gradient(135deg, #F5F5DC 0%, #FAFAF0 100%); border-radius: 20px; margin: 25px 0; box-shadow: 0 8px 25px rgba(245, 245, 220, 0.3); border: 1px solid rgba(212, 184, 227, 0.2);">
+        <h3 style="color: #2C3E50; margin-bottom: 25px; font-weight: 600; font-size: 1.8rem;">🍽️ 다양한 요리 카테고리 🍽️</h3>
+        <div style="font-size: 3.5em; line-height: 1.5; margin: 20px 0;">
             🍲 🥘 🍳 🥗 🍜 🍱 🥙 🌮 🍕 🍝 🥞 🧆
         </div>
-        <p style="color: #666; margin-top: 15px;">다양한 요리로 가족의 행복을 만들어보세요!</p>
+        <p style="color: #6C757D; margin-top: 20px; font-size: 1.1rem; font-weight: 500;">다양한 요리로 가족의 행복을 만들어보세요!</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -891,19 +1047,19 @@ def show_home_page(db: DatabaseManager):
     
     with col1:
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); padding: 20px; border-radius: 15px; text-align: center;">
-            <div style="font-size: 2.5em; margin-bottom: 10px;">🥬</div>
-            <h3 style="color: white; margin: 0;">보유 재료</h3>
-            <h2 style="color: white; margin: 5px 0;">{}</h2>
+        <div style="background: linear-gradient(135deg, #E6B8E3 0%, #D4B8E3 100%); padding: 25px; border-radius: 20px; text-align: center; box-shadow: 0 8px 25px rgba(212, 184, 227, 0.25); border: 1px solid rgba(255,255,255,0.3); transition: all 0.3s ease;">
+            <div style="font-size: 3em; margin-bottom: 15px;">🥬</div>
+            <h3 style="color: white; margin: 0; font-weight: 600; font-size: 1.2rem;">보유 재료</h3>
+            <h2 style="color: white; margin: 8px 0; font-size: 2.5rem; font-weight: 700;">{}</h2>
         </div>
         """.format(len(ingredients_df)), unsafe_allow_html=True)
     
     with col2:
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); padding: 20px; border-radius: 15px; text-align: center;">
-            <div style="font-size: 2.5em; margin-bottom: 10px;">📖</div>
-            <h3 style="color: white; margin: 0;">저장된 레시피</h3>
-            <h2 style="color: white; margin: 5px 0;">{}</h2>
+        <div style="background: linear-gradient(135deg, #B8D4E3 0%, #D4B8E3 100%); padding: 25px; border-radius: 20px; text-align: center; box-shadow: 0 8px 25px rgba(184, 212, 227, 0.25); border: 1px solid rgba(255,255,255,0.3); transition: all 0.3s ease;">
+            <div style="font-size: 3em; margin-bottom: 15px;">📖</div>
+            <h3 style="color: white; margin: 0; font-weight: 600; font-size: 1.2rem;">저장된 레시피</h3>
+            <h2 style="color: white; margin: 8px 0; font-size: 2.5rem; font-weight: 700;">{}</h2>
         </div>
         """.format(len(recipes_df)), unsafe_allow_html=True)
     
@@ -919,14 +1075,15 @@ def show_home_page(db: DatabaseManager):
             ]
             expiring_count = len(expiring_soon)
         
-        color = "#ff6b6b" if expiring_count > 0 else "#51cf66"
+        color_gradient = "linear-gradient(135deg, #F4C2C2 0%, #FF9B9B 100%)" if expiring_count > 0 else "linear-gradient(135deg, #E6B8E3 0%, #D4B8E3 100%)"
+        box_shadow = "0 8px 25px rgba(244, 194, 194, 0.25)" if expiring_count > 0 else "0 8px 25px rgba(212, 184, 227, 0.25)"
         st.markdown("""
-        <div style="background: linear-gradient(135deg, {} 0%, {} 100%); padding: 20px; border-radius: 15px; text-align: center;">
-            <div style="font-size: 2.5em; margin-bottom: 10px;">⏰</div>
-            <h3 style="color: white; margin: 0;">유통기한 임박</h3>
-            <h2 style="color: white; margin: 5px 0;">{}</h2>
+        <div style="background: {}; padding: 25px; border-radius: 20px; text-align: center; box-shadow: {}; border: 1px solid rgba(255,255,255,0.3); transition: all 0.3s ease;">
+            <div style="font-size: 3em; margin-bottom: 15px;">⏰</div>
+            <h3 style="color: white; margin: 0; font-weight: 600; font-size: 1.2rem;">유통기한 임박</h3>
+            <h2 style="color: white; margin: 8px 0; font-size: 2.5rem; font-weight: 700;">{}</h2>
         </div>
-        """.format(color, color, expiring_count), unsafe_allow_html=True)
+        """.format(color_gradient, box_shadow, expiring_count), unsafe_allow_html=True)
     
     # 최근 레시피
     if not recipes_df.empty:
@@ -1603,7 +1760,7 @@ def display_recipe(recipe, db: DatabaseManager, recipe_type: str):
                 values=nutrition_data['칼로리'],
                 names=nutrition_data['영양소'],
                 title="영양소 비율",
-                color_discrete_sequence=['#FF9999', '#66B2FF', '#99FF99']
+                color_discrete_sequence=['#D4B8E3', '#B8D4E3', '#F4C2C2']
             )
             fig.update_layout(height=300)
             st.plotly_chart(fig, use_container_width=True)
@@ -2106,10 +2263,33 @@ def show_cooking_history(db: DatabaseManager):
         
         if not history_df.empty:
             for _, record in history_df.iterrows():
-                with st.expander(f"{record['recipe_name'] if pd.notna(record['recipe_name']) else '직접 입력'} - {record['cooking_date']} (⭐{record['rating']})"):
+                # 직접 입력된 레시피의 경우 ingredients_used에서 레시피명 추출
+                if pd.isna(record['recipe_name']):
+                    # ingredients_used 형식: "레시피명|재료|조리시간|인분"
+                    ingredients_parts = record['ingredients_used'].split('|')
+                    if len(ingredients_parts) >= 1:
+                        display_recipe_name = ingredients_parts[0]
+                    else:
+                        display_recipe_name = "직접 입력"
+                else:
+                    display_recipe_name = record['recipe_name']
+                
+                with st.expander(f"{display_recipe_name} - {record['cooking_date']} (⭐{record['rating']})"):
                     st.write(f"**요리한 날짜:** {record['cooking_date']}")
                     st.write(f"**평점:** {'⭐' * record['rating']}")
-                    st.write(f"**사용한 재료:** {record['ingredients_used']}")
+                    
+                    # 직접 입력된 레시피의 경우 재료 정보를 더 깔끔하게 표시
+                    if pd.isna(record['recipe_name']):
+                        ingredients_parts = record['ingredients_used'].split('|')
+                        if len(ingredients_parts) >= 2:
+                            st.write(f"**사용한 재료:** {ingredients_parts[1]}")
+                        if len(ingredients_parts) >= 3:
+                            st.write(f"**조리 시간:** {ingredients_parts[2]}")
+                        if len(ingredients_parts) >= 4:
+                            st.write(f"**인분:** {ingredients_parts[3]}")
+                    else:
+                        st.write(f"**사용한 재료:** {record['ingredients_used']}")
+                    
                     if record['notes']:
                         st.write(f"**메모:** {record['notes']}")
                     
@@ -2127,7 +2307,13 @@ def show_cooking_history(db: DatabaseManager):
 
 def show_analytics_dashboard(db: DatabaseManager):
     """분석 대시보드 페이지"""
-    st.header("📊 분석 대시보드")
+    st.header(" 분석 대시보드")
+    
+    # 새로고침 버튼
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("🔄 새로고침", use_container_width=True):
+            st.rerun()
     
     ingredients_df = db.get_ingredients()
     recipes_df = db.get_recipes()
@@ -2136,29 +2322,139 @@ def show_analytics_dashboard(db: DatabaseManager):
         st.info("아직 데이터가 충분하지 않습니다. 재료를 추가하고 레시피를 저장하여 분석을 시작하세요!")
         return
 
-    st.subheader("재료 카테고리 분포")
+    # 1. 재료 카테고리 분포 (도넛 차트)
+    st.subheader("🥬 재료 카테고리 분포")
+    st.markdown("*보유 재료 카테고리별 분포*")
+    
     if not ingredients_df.empty:
         category_counts = ingredients_df['category'].value_counts().reset_index()
         category_counts.columns = ['Category', 'Count']
-        fig = px.pie(category_counts, values='Count', names='Category', title='보유 재료 카테고리별 분포')
+        
+        # 도넛 차트 생성 (연한 보라색 중심 파스텔 톤)
+        fig = go.Figure(data=[go.Pie(
+            labels=category_counts['Category'],
+            values=category_counts['Count'],
+            hole=0.6,
+            marker_colors=['#D4B8E3', '#B8D4E3', '#F4C2C2', '#E6B8E3', '#C2B8E3', '#F0B8E3'],
+            textinfo='label+percent',
+            textposition='outside'
+        )])
+        
+        fig.update_layout(
+            title="보유 재료 카테고리별 분포",
+            showlegend=True,
+            height=400,
+            margin=dict(t=50, b=50, l=50, r=50)
+        )
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("보유 재료 데이터가 없습니다.")
 
-    st.subheader("가장 많이 사용된 레시피 TOP 5")
+    # 2. 레시피 난이도 분포 (막대 차트)
+    st.subheader("🍳 레시피 난이도 분포")
+    st.markdown("*레시피 난이도별 분포*")
+    
+    if not recipes_df.empty:
+        difficulty_counts = recipes_df['difficulty'].value_counts().reset_index()
+        difficulty_counts.columns = ['Difficulty', 'Count']
+        
+        fig = px.bar(
+            difficulty_counts, 
+            x='Difficulty', 
+            y='Count',
+            title='레시피 난이도별 분포',
+            color='Difficulty',
+            color_discrete_map={
+                '쉬움': '#D4B8E3',
+                '보통': '#B8D4E3',
+                '어려움': '#F4C2C2'
+            }
+        )
+        
+        fig.update_layout(
+            xaxis_title="난이도",
+            yaxis_title="레시피 수",
+            height=400,
+            showlegend=False
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("저장된 레시피 데이터가 없습니다.")
+
+    # 3. 인기 레시피 TOP 5 (수평 막대 차트)
+    st.subheader("🔥 인기 레시피 TOP 5")
+    st.markdown("*가장 많이 사용된 레시피*")
+    
     if not recipes_df.empty:
         top_recipes = recipes_df.sort_values(by='used_count', ascending=False).head(5)
         if not top_recipes.empty:
-            fig = px.bar(top_recipes, x='name', y='used_count', title='가장 많이 사용된 레시피',
-                         labels={'name': '레시피 이름', 'used_count': '사용 횟수'})
+            fig = px.bar(
+                top_recipes, 
+                y='name', 
+                x='used_count',
+                orientation='h',
+                title='가장 많이 사용된 레시피',
+                color='used_count',
+                color_continuous_scale='Purples'
+            )
+            
+            fig.update_layout(
+                xaxis_title="사용 횟수",
+                yaxis_title="레시피 이름",
+                height=400,
+                showlegend=False
+            )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("사용된 레시피 데이터가 없습니다.")
     else:
         st.info("저장된 레시피 데이터가 없습니다.")
+
+    # 4. 유통기한 현황 (파이 차트)
+    st.subheader("⏰ 유통기한 현황")
+    st.markdown("*재료 유통기한 현황*")
     
-    # 쇼핑 리스트 구매완료 분석
-    st.subheader("🛒 쇼핑 리스트 구매완료 분석")
+    if not ingredients_df.empty:
+        today = datetime.now().date()
+        ingredients_df['expiry_date'] = pd.to_datetime(ingredients_df['expiry_date']).dt.date
+        
+        # 유통기한 상태 분류
+        def classify_expiry(expiry_date):
+            if pd.isna(expiry_date):
+                return "정보 없음"
+            days_left = (expiry_date - today).days
+            if days_left < 0:
+                return "유통기한 지남"
+            elif days_left <= 3:
+                return "임박 (3일 이내)"
+            else:
+                return "신선함"
+        
+        ingredients_df['expiry_status'] = ingredients_df['expiry_date'].apply(classify_expiry)
+        expiry_counts = ingredients_df['expiry_status'].value_counts().reset_index()
+        expiry_counts.columns = ['Status', 'Count']
+        
+        fig = px.pie(
+            expiry_counts, 
+            values='Count', 
+            names='Status',
+            title='재료 유통기한 현황',
+            color_discrete_map={
+                '신선함': '#D4B8E3',
+                '임박 (3일 이내)': '#F4C2C2',
+                '유통기한 지남': '#E6B8E3',
+                '정보 없음': '#B8D4E3'
+            }
+        )
+        
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("보유 재료 데이터가 없습니다.")
+
+    # 5. 쇼핑 리스트 분석
+    st.subheader("🛒 쇼핑 리스트 분석")
+    
     conn = db._get_conn()
     
     # 전체 쇼핑 리스트 통계
@@ -2167,31 +2463,75 @@ def show_analytics_dashboard(db: DatabaseManager):
     pending_items = total_items - purchased_items
     
     if total_items > 0:
-        col1, col2, col3 = st.columns(3)
+        # 키 메트릭 표시
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("전체 품목", total_items)
         with col2:
-            st.metric("구매완료", purchased_items)
+            completion_rate = (purchased_items / total_items * 100) if total_items > 0 else 0
+            st.metric("구매완료", purchased_items, f"{completion_rate:.1f}%")
         with col3:
-            st.metric("구매대기", pending_items)
+            st.metric("구매대기", pending_items, f"{(pending_items/total_items*100):.1f}%" if total_items > 0 else "0%")
+        with col4:
+            st.metric("완료율", f"{completion_rate:.1f}%")
         
-        # 구매완료율 파이 차트
-        if total_items > 0:
-            completion_data = pd.DataFrame({
-                '상태': ['구매완료', '구매대기'],
-                '개수': [purchased_items, pending_items]
-            })
-            fig = px.pie(completion_data, values='개수', names='상태', 
-                        title='쇼핑 리스트 구매완료율',
-                        color_discrete_map={'구매완료': '#28a745', '구매대기': '#ffc107'})
+        # 구매완료율 도넛 차트
+        completion_data = pd.DataFrame({
+            '상태': ['구매완료', '구매대기'],
+            '개수': [purchased_items, pending_items]
+        })
+        
+        fig = go.Figure(data=[go.Pie(
+            labels=completion_data['상태'],
+            values=completion_data['개수'],
+            hole=0.6,
+            marker_colors=['#D4B8E3', '#B8D4E3'],
+            textinfo='label+percent',
+            textposition='outside'
+        )])
+        
+        fig.update_layout(
+            title="쇼핑 리스트 구매완료율",
+            height=400,
+            margin=dict(t=50, b=50, l=50, r=50)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # 구매대기 품목 TOP 10
+        pending_items_df = pd.read_sql_query('''
+            SELECT ingredient_name, quantity, unit, priority
+            FROM shopping_list 
+            WHERE purchased = FALSE
+            ORDER BY priority DESC, created_at ASC
+            LIMIT 10
+        ''', conn)
+        
+        if not pending_items_df.empty:
+            st.subheader("📋 구매대기 품목 TOP 10")
+            
+            fig = px.bar(
+                pending_items_df,
+                x='ingredient_name',
+                y='quantity',
+                title='구매대기 품목 TOP 10',
+                color='priority',
+                color_continuous_scale='Purples',
+                labels={'ingredient_name': '품목명', 'quantity': '수량', 'priority': '우선순위'}
+            )
+            
+            fig.update_layout(
+                xaxis_title="품목명",
+                yaxis_title="수량",
+                height=400,
+                xaxis_tickangle=-45
+            )
             st.plotly_chart(fig, use_container_width=True)
-        
-
     else:
         st.info("쇼핑 리스트 데이터가 없습니다.")
-    
-    # 사용율이 높은 식재료 분석
-    st.subheader("📈 사용율이 높은 식재료 TOP 10")
+
+    # 6. 인기 식재료 분석 (트리맵)
+    st.subheader("🥕 인기 식재료 분석")
+    st.markdown("*식재료 사용빈도*")
     
     # 레시피에서 사용된 재료들을 분석
     ingredient_usage = {}
@@ -2213,16 +2553,23 @@ def show_analytics_dashboard(db: DatabaseManager):
                 continue
         
         if ingredient_usage:
-            # 상위 10개 재료
-            top_ingredients = sorted(ingredient_usage.items(), key=lambda x: x[1], reverse=True)[:10]
+            # 상위 15개 재료
+            top_ingredients = sorted(ingredient_usage.items(), key=lambda x: x[1], reverse=True)[:15]
             
             if top_ingredients:
                 ingredient_df = pd.DataFrame(top_ingredients, columns=['재료명', '사용횟수'])
                 
-                fig = px.bar(ingredient_df, x='재료명', y='사용횟수', 
-                           title='가장 많이 사용된 식재료 TOP 10',
-                           labels={'재료명': '재료명', '사용횟수': '총 사용횟수'})
-                fig.update_xaxes(tickangle=45)
+                # 트리맵 차트
+                fig = px.treemap(
+                    ingredient_df,
+                    path=['재료명'],
+                    values='사용횟수',
+                    title='인기 식재료 분석',
+                    color='사용횟수',
+                    color_continuous_scale='Purples'
+                )
+                
+                fig.update_layout(height=500)
                 st.plotly_chart(fig, use_container_width=True)
                 
                 # 테이블로도 표시
@@ -2233,7 +2580,154 @@ def show_analytics_dashboard(db: DatabaseManager):
             st.info("레시피 사용 데이터가 없습니다.")
     else:
         st.info("레시피 데이터가 없습니다.")
+
+    # 7. 월별 요리 활동 분석
+    st.subheader("📅 월별 요리 활동 분석")
     
+    # 요리 기록 조회
+    history_df = pd.read_sql_query('''
+        SELECT cooking_date, rating, r.name as recipe_name
+        FROM cooking_history ch
+        LEFT JOIN recipes r ON ch.recipe_id = r.id
+        ORDER BY cooking_date DESC
+    ''', conn)
+    
+    if not history_df.empty:
+        history_df['cooking_date'] = pd.to_datetime(history_df['cooking_date'])
+        history_df['month'] = history_df['cooking_date'].dt.to_period('M')
+        
+        monthly_stats = history_df.groupby('month').agg({
+            'cooking_date': 'count',
+            'rating': 'mean'
+        }).reset_index()
+        monthly_stats.columns = ['월', '요리 횟수', '평균 평점']
+        monthly_stats['월'] = monthly_stats['월'].astype(str)
+        
+        # 월별 요리 횟수와 평점
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=monthly_stats['월'],
+            y=monthly_stats['요리 횟수'],
+            mode='lines+markers',
+            name='요리 횟수',
+            line=dict(color='#D4B8E3', width=3),
+            marker=dict(size=8)
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=monthly_stats['월'],
+            y=monthly_stats['평균 평점'] * 2,  # 스케일 맞추기
+            mode='lines+markers',
+            name='평균 평점 (x2)',
+            line=dict(color='#B8D4E3', width=3),
+            marker=dict(size=8),
+            yaxis='y2'
+        ))
+        
+        fig.update_layout(
+            title='월별 요리 활동 및 평점',
+            xaxis_title='월',
+            yaxis_title='요리 횟수',
+            yaxis2=dict(title='평균 평점', overlaying='y', side='right'),
+            height=400,
+            hovermode='x unified'
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("요리 기록 데이터가 없습니다.")
+
+    # 8. 레시피 카테고리별 분포
+    st.subheader("🍽️ 레시피 카테고리별 분포")
+    
+    if not recipes_df.empty:
+        category_counts = recipes_df['category'].value_counts().reset_index()
+        category_counts.columns = ['Category', 'Count']
+        
+        # 수평 막대 차트
+        fig = px.bar(
+            category_counts,
+            x='Count',
+            y='Category',
+            orientation='h',
+            title='레시피 카테고리별 분포',
+            color='Count',
+            color_continuous_scale='Purples'
+        )
+        
+        fig.update_layout(
+            xaxis_title="레시피 수",
+            yaxis_title="카테고리",
+            height=400,
+            showlegend=False
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("레시피 데이터가 없습니다.")
+
+    # 9. 조리시간 분포
+    st.subheader("⏱️ 조리시간 분포")
+    
+    if not recipes_df.empty:
+        # 조리시간 구간별 분류
+        def classify_cooking_time(time):
+            if time <= 15:
+                return "15분 이내"
+            elif time <= 30:
+                return "15-30분"
+            elif time <= 60:
+                return "30분-1시간"
+            else:
+                return "1시간 이상"
+        
+        recipes_df['cooking_time_category'] = recipes_df['cooking_time'].apply(classify_cooking_time)
+        time_counts = recipes_df['cooking_time_category'].value_counts().reset_index()
+        time_counts.columns = ['조리시간', '레시피 수']
+        
+        fig = px.pie(
+            time_counts,
+            values='레시피 수',
+            names='조리시간',
+            title='조리시간별 레시피 분포',
+            color_discrete_sequence=['#D4B8E3', '#B8D4E3', '#F4C2C2', '#E6B8E3']
+        )
+        
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("레시피 데이터가 없습니다.")
+
+    # 10. 요리 평점 분석
+    st.subheader("⭐ 요리 평점 분석")
+    
+    if not history_df.empty:
+        rating_counts = history_df['rating'].value_counts().sort_index().reset_index()
+        rating_counts.columns = ['평점', '횟수']
+        
+        fig = px.bar(
+            rating_counts,
+            x='평점',
+            y='횟수',
+            title='요리 평점 분포',
+            color='평점',
+            color_continuous_scale='Purples',
+            text='횟수'
+        )
+        
+        fig.update_layout(
+            xaxis_title="평점",
+            yaxis_title="요리 횟수",
+            height=400,
+            showlegend=False
+        )
+        fig.update_traces(textposition='outside')
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # 평균 평점
+        avg_rating = history_df['rating'].mean()
+        st.metric("전체 평균 평점", f"{avg_rating:.2f}점")
+
     conn.close()
 
 if __name__ == "__main__":
