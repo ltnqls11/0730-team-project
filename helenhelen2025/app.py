@@ -391,8 +391,133 @@ def show_recipe_recommendation():
         st.warning("먼저 재료를 등록해주세요!")
         return
     
+    # 메뉴룰렛과 일반 추천 탭 분리
+    tab1, tab2 = st.tabs(["🎯 메뉴룰렛", "🤖 AI 맞춤 추천"])
+    
+    with tab1:
+        show_menu_roulette(ingredients)
+    
+    with tab2:
+        show_ai_recipe_recommendation(ingredients)
+    
+def show_menu_roulette(ingredients):
+    st.subheader("🎯 오늘 뭐 먹지? 메뉴룰렛!")
+    st.markdown("고민 그만! 룰렛이 대신 골라드려요 🎲")
+    
+    # 룰렛 카테고리 선택
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        roulette_type = st.selectbox(
+            "룰렛 종류 선택",
+            ["나라별 메뉴", "재료별 메뉴", "상황별 메뉴", "랜덤 메뉴"]
+        )
+    
+    with col2:
+        difficulty_pref = st.selectbox(
+            "난이도 선호",
+            ["상관없음", "간단한 요리", "보통", "도전적인 요리"]
+        )
+    
+    # 룰렛 메뉴 데이터
+    menu_categories = {
+        "나라별 메뉴": [
+            "한국", "중국", "일본", "이탈리아", "프랑스", "미국", "태국", "인도",
+            "멕시코", "베트남", "스페인", "그리스", "터키", "브라질"
+        ],
+        "재료별 메뉴": [
+            "닭고기 요리", "돼지고기 요리", "소고기 요리", "해산물 요리", "채소 요리",
+            "계란 요리", "면 요리", "밥 요리", "국물 요리", "볶음 요리"
+        ],
+        "상황별 메뉴": [
+            "혼밥 메뉴", "술안주", "다이어트", "든든한 한끼", "간단 간식",
+            "손님 접대", "아이 반찬", "도시락", "야식", "브런치"
+        ],
+        "랜덤 메뉴": [
+            "김치찌개", "된장찌개", "불고기", "비빔밥", "볶음밥", "라면",
+            "파스타", "피자", "샐러드", "스테이크", "카레", "짜장면",
+            "치킨", "햄버거", "초밥", "우동", "떡볶이", "순대국"
+        ]
+    }
+    
+    selected_menus = menu_categories[roulette_type]
+    
+    # 룰렛 실행
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        if st.button("🎲 룰렛 돌리기!", type="primary", use_container_width=True):
+            import random
+            import time
+            
+            # 룰렛 애니메이션 효과
+            placeholder = st.empty()
+            
+            for i in range(10):
+                random_choice = random.choice(selected_menus)
+                placeholder.markdown(f"### 🎯 {random_choice}")
+                time.sleep(0.2)
+            
+            # 최종 선택
+            final_choice = random.choice(selected_menus)
+            placeholder.markdown(f"### 🎉 오늘의 메뉴: **{final_choice}** 🎉")
+            
+            st.session_state.roulette_result = final_choice
+            st.balloons()
+    
+    # 룰렛 결과가 있으면 레시피 추천
+    if hasattr(st.session_state, 'roulette_result'):
+        st.markdown("---")
+        st.subheader(f"🍽️ {st.session_state.roulette_result} 레시피 추천")
+        
+        # 보유 재료 기반 추천
+        ingredient_names = [ing['name'] for ing in ingredients]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🤖 AI 레시피 생성", use_container_width=True):
+                with st.spinner(f"{st.session_state.roulette_result} 레시피를 생성하는 중..."):
+                    # 룰렛 결과와 보유 재료를 조합한 프롬프트
+                    roulette_prompt = f"{st.session_state.roulette_result} 요리를 만들고 싶습니다. "
+                    if difficulty_pref != "상관없음":
+                        roulette_prompt += f"난이도는 {difficulty_pref}으로 해주세요. "
+                    
+                    recipe = st.session_state.openai_manager.generate_recipe(
+                        ingredient_names[:10],  # 너무 많은 재료는 제한
+                        roulette_prompt
+                    )
+                    
+                    if recipe:
+                        st.session_state.roulette_recipe = recipe
+                        st.rerun()
+        
+        with col2:
+            if st.button("🔄 다시 돌리기", use_container_width=True):
+                if 'roulette_result' in st.session_state:
+                    del st.session_state.roulette_result
+                if 'roulette_recipe' in st.session_state:
+                    del st.session_state.roulette_recipe
+                st.rerun()
+        
+        # 생성된 레시피 표시
+        if hasattr(st.session_state, 'roulette_recipe'):
+            recipe = st.session_state.roulette_recipe
+            st.markdown(format_recipe_for_display(recipe))
+            
+            # 레시피 저장 및 쇼핑 리스트 추가 버튼
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("💾 레시피 저장", key="save_roulette_recipe"):
+                    save_recipe_to_db(recipe)
+            
+            with col2:
+                if st.button("🛒 부족한 재료 쇼핑리스트 추가", key="add_roulette_shopping"):
+                    add_missing_ingredients_to_shopping(recipe, ingredient_names)
+
+def show_ai_recipe_recommendation(ingredients):
     # 사용할 재료 선택
-    st.subheader("사용할 재료 선택")
+    st.subheader("🤖 AI 맞춤 레시피 추천")
     ingredient_names = [ing['name'] for ing in ingredients]
     selected_ingredients = st.multiselect(
         "레시피에 사용할 재료를 선택하세요",
@@ -423,44 +548,7 @@ def show_recipe_recommendation():
                 
                 with col1:
                     if st.button("💾 레시피 저장"):
-                        with st.spinner("레시피를 저장하는 중..."):
-                            try:
-                                # 재료 정보 변환
-                                recipe_ingredients = []
-                                for ing in recipe.get('ingredients', []):
-                                    ingredient_data = {
-                                        'name': ing.get('name', ''),
-                                        'quantity': float(ing.get('quantity', 1)),
-                                        'unit': ing.get('unit', '개'),
-                                        'is_essential': ing.get('is_essential', True)
-                                    }
-                                    recipe_ingredients.append(ingredient_data)
-                                
-                                st.write("디버그: 저장할 레시피 정보")
-                                st.write(f"제목: {recipe.get('title')}")
-                                st.write(f"재료 수: {len(recipe_ingredients)}")
-                                st.write(f"재료: {recipe_ingredients}")
-                                
-                                success = st.session_state.db_manager.add_recipe(
-                                    title=recipe.get('title', '제목 없음'),
-                                    description=recipe.get('description', ''),
-                                    instructions='\n'.join(recipe.get('instructions', [])),
-                                    ingredients=recipe_ingredients,
-                                    cooking_time=recipe.get('cooking_time'),
-                                    servings=recipe.get('servings'),
-                                    difficulty=recipe.get('difficulty', '보통')
-                                )
-                                
-                                if success:
-                                    st.success("✅ 레시피가 성공적으로 저장되었습니다!")
-                                    st.balloons()
-                                    st.rerun()
-                                else:
-                                    st.error("❌ 레시피 저장에 실패했습니다. 콘솔 로그를 확인해주세요.")
-                                    
-                            except Exception as e:
-                                st.error(f"❌ 레시피 저장 중 오류 발생: {str(e)}")
-                                st.write("오류 상세:", e)
+                        save_recipe_to_db(recipe)
                 
                 with col2:
                     # 부족한 재료 확인
@@ -541,6 +629,83 @@ def show_recipe_recommendation():
                             st.success("✅ 모든 재료가 준비되어 있습니다!")
             else:
                 st.error("레시피 생성에 실패했습니다. 다시 시도해주세요.")
+
+def save_recipe_to_db(recipe):
+    """레시피를 데이터베이스에 저장하는 함수"""
+    with st.spinner("레시피를 저장하는 중..."):
+        try:
+            # 재료 정보 변환
+            recipe_ingredients = []
+            for ing in recipe.get('ingredients', []):
+                ingredient_data = {
+                    'name': ing.get('name', ''),
+                    'quantity': float(ing.get('quantity', 1)),
+                    'unit': ing.get('unit', '개'),
+                    'is_essential': ing.get('is_essential', True)
+                }
+                recipe_ingredients.append(ingredient_data)
+            
+            success = st.session_state.db_manager.add_recipe(
+                title=recipe.get('title', '제목 없음'),
+                description=recipe.get('description', ''),
+                instructions='\n'.join(recipe.get('instructions', [])),
+                ingredients=recipe_ingredients,
+                cooking_time=recipe.get('cooking_time'),
+                servings=recipe.get('servings'),
+                difficulty=recipe.get('difficulty', '보통')
+            )
+            
+            if success:
+                st.success("✅ 레시피가 성공적으로 저장되었습니다!")
+                st.balloons()
+                st.rerun()
+            else:
+                st.error("❌ 레시피 저장에 실패했습니다.")
+                
+        except Exception as e:
+            st.error(f"❌ 레시피 저장 중 오류 발생: {str(e)}")
+
+def add_missing_ingredients_to_shopping(recipe, available_ingredients):
+    """부족한 재료를 쇼핑리스트에 추가하는 함수"""
+    with st.spinner("부족한 재료를 확인하는 중..."):
+        try:
+            recipe_ingredient_names = [ing.get('name') for ing in recipe.get('ingredients', [])]
+            missing_analysis = st.session_state.openai_manager.suggest_missing_ingredients(
+                recipe_ingredient_names, 
+                available_ingredients
+            )
+            
+            if isinstance(missing_analysis, dict):
+                essential_missing = missing_analysis.get('essential', [])
+                
+                if essential_missing:
+                    success_count = 0
+                    for item in essential_missing:
+                        if st.session_state.db_manager.add_to_shopping_list(item, 1, "개"):
+                            success_count += 1
+                    
+                    if success_count > 0:
+                        st.success(f"✅ {success_count}개 재료가 쇼핑 리스트에 추가되었습니다!")
+                        st.rerun()
+                    else:
+                        st.error("❌ 쇼핑 리스트 추가에 실패했습니다.")
+                else:
+                    st.success("✅ 모든 재료가 준비되어 있습니다!")
+            else:
+                if missing_analysis:
+                    success_count = 0
+                    for item in missing_analysis:
+                        if st.session_state.db_manager.add_to_shopping_list(item, 1, "개"):
+                            success_count += 1
+                    
+                    if success_count > 0:
+                        st.success(f"✅ {success_count}개 재료가 쇼핑 리스트에 추가되었습니다!")
+                        st.rerun()
+                else:
+                    st.success("✅ 모든 재료가 준비되어 있습니다!")
+                    
+        except Exception as e:
+            st.error(f"❌ 쇼핑 리스트 추가 중 오류 발생: {str(e)}")
 
 def show_recipe_book():
     col1, col2 = st.columns([3, 1])
